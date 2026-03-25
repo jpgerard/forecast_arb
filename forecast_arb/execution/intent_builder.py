@@ -117,8 +117,13 @@ def compute_intent_id(intent_content: Dict[str, Any]) -> str:
     Returns:
         40-character hex SHA1 hash
     """
-    # Ensure intent_id is not in the content
-    content_copy = {k: v for k, v in intent_content.items() if k != "intent_id"}
+    # Exclude intent_id and top-level provenance fields from hash.
+    # Provenance fields are run-context, not strategy-content; excluding them
+    # keeps the hash stable across runs that differ only in run_id/source_run_dir.
+    _HASH_EXCLUDED = frozenset(
+        {"intent_id", "candidate_id", "picked_rank", "run_id", "source_run_dir"}
+    )
+    content_copy = {k: v for k, v in intent_content.items() if k not in _HASH_EXCLUDED}
     
     # Serialize to sorted JSON (for determinism)
     json_str = json.dumps(content_copy, sort_keys=True, separators=(',', ':'))
@@ -135,6 +140,8 @@ def build_order_intent(
     qty: Optional[int] = None,
     limit_start: Optional[float] = None,
     limit_max: Optional[float] = None,
+    run_id: Optional[str] = None,
+    source_run_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Build OrderIntent from candidate with exact schema required by execute_trade.
@@ -254,6 +261,12 @@ def build_order_intent(
         },
         "metadata": metadata,
     }
+
+    # Promote top-level provenance fields (excluded from intent_id hash by compute_intent_id)
+    intent["candidate_id"] = candidate.get("candidate_id")
+    intent["picked_rank"] = candidate.get("rank")
+    intent["run_id"] = run_id
+    intent["source_run_dir"] = source_run_dir
 
     # Compute deterministic intent_id from content (excluding intent_id itself)
     intent_id = compute_intent_id(intent)

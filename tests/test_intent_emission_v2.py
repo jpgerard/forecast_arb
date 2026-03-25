@@ -304,5 +304,91 @@ class TestIntentEmissionIntegration:
         pytest.fail("Should not reach execution code in intent mode")
 
 
+class TestProvenanceFields:
+    """Patch 1-A: Top-level provenance fields in OrderIntent."""
+
+    _CANDIDATE = {
+        "rank": 2,
+        "expiry": "20260320",
+        "strikes": {"long_put": 580.0, "short_put": 560.0},
+        "symbol": "SPY",
+        "candidate_id": "cand_20260320_580_560",
+        "metrics": {"ev_per_dollar": 0.30},
+    }
+
+    def test_provenance_fields_promoted_to_top_level(self):
+        """candidate_id, picked_rank, run_id, source_run_dir are at top-level."""
+        intent = build_order_intent(
+            candidate=self._CANDIDATE,
+            regime="crash",
+            qty=1,
+            limit_start=2.50,
+            limit_max=2.75,
+            run_id="run_abc123",
+            source_run_dir="/runs/crash_venture_v2/run_abc123",
+        )
+        assert intent["candidate_id"] == "cand_20260320_580_560"
+        assert intent["picked_rank"] == 2
+        assert intent["run_id"] == "run_abc123"
+        assert intent["source_run_dir"] == "/runs/crash_venture_v2/run_abc123"
+
+    def test_metadata_preserved_alongside_top_level(self):
+        """metadata dict still contains candidate_id for backward compat."""
+        intent = build_order_intent(
+            candidate=self._CANDIDATE,
+            regime="crash",
+            qty=1,
+            limit_start=2.50,
+            limit_max=2.75,
+            run_id="run_abc123",
+        )
+        # Top-level AND metadata both present
+        assert intent["candidate_id"] == "cand_20260320_580_560"
+        assert intent["metadata"]["candidate_id"] == "cand_20260320_580_560"
+
+    def test_intent_id_stable_regardless_of_run_context(self):
+        """intent_id is the same for two intents that differ only in run_id/source_run_dir."""
+        base_kwargs = dict(
+            candidate=self._CANDIDATE,
+            regime="crash",
+            qty=1,
+            limit_start=2.50,
+            limit_max=2.75,
+        )
+        intent_a = build_order_intent(**base_kwargs, run_id=None, source_run_dir=None)
+        intent_b = build_order_intent(
+            **base_kwargs,
+            run_id="run_xyz999",
+            source_run_dir="/runs/foo/bar",
+        )
+        assert intent_a["intent_id"] == intent_b["intent_id"], (
+            "intent_id must be stable across differing run_id / source_run_dir"
+        )
+
+    def test_intent_id_differs_when_strategy_changes(self):
+        """Sanity: intent_id does differ when actual strategy content changes."""
+        cand_a = dict(self._CANDIDATE, strikes={"long_put": 580.0, "short_put": 560.0})
+        cand_b = dict(self._CANDIDATE, strikes={"long_put": 575.0, "short_put": 555.0})
+        intent_a = build_order_intent(candidate=cand_a, regime="crash", qty=1,
+                                      limit_start=2.50, limit_max=2.75)
+        intent_b = build_order_intent(candidate=cand_b, regime="crash", qty=1,
+                                      limit_start=2.50, limit_max=2.75)
+        assert intent_a["intent_id"] != intent_b["intent_id"]
+
+    def test_none_run_id_stored_as_none(self):
+        """When run_id is not provided, top-level field is None (not absent)."""
+        intent = build_order_intent(
+            candidate=self._CANDIDATE,
+            regime="crash",
+            qty=1,
+            limit_start=2.50,
+            limit_max=2.75,
+        )
+        assert "run_id" in intent
+        assert intent["run_id"] is None
+        assert "source_run_dir" in intent
+        assert intent["source_run_dir"] is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

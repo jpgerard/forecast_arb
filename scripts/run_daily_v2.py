@@ -1092,7 +1092,9 @@ def main():
             regime=args.regime,
             qty=args.qty,
             limit_start=args.limit_start,
-            limit_max=args.limit_max
+            limit_max=args.limit_max,
+            run_id=run_id,
+            source_run_dir=str(run_dir),
         )
         
         logger.info("OrderIntent generated:")

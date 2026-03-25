@@ -11,7 +11,7 @@ This enables post-hoc analysis of trade performance and decision quality.
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 
 
 def append_trade_open(
@@ -257,6 +257,36 @@ def _append_jsonl(path: Path, obj: dict) -> None:
         f.write(line + "\n")
 
 
+def read_trade_events(ledger_path: Path) -> List[Dict[str, Any]]:
+    """
+    Return all event-type entries from the ledger, in file order.
+
+    Event-type entries are written by append_trade_event() and carry an 'event'
+    field (QUOTE_OK, QUOTE_BLOCKED, STAGED_PAPER, SUBMITTED_LIVE, FILLED_OPEN).
+
+    This is distinct from read_trade_outcomes() which handles OPEN/CLOSED entries.
+
+    Args:
+        ledger_path: Path to trade_outcomes.jsonl
+
+    Returns:
+        List of event dicts, preserving file order
+    """
+    if not ledger_path.exists():
+        return []
+
+    events: List[Dict[str, Any]] = []
+    with open(ledger_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            if "event" in entry:
+                events.append(entry)
+
+    return events
+
+
 def read_trade_outcomes(ledger_path: Path) -> Dict[str, Dict[str, Any]]:
     """
     Read trade outcomes from a ledger and reconstruct full trade records.
@@ -281,8 +311,11 @@ def read_trade_outcomes(ledger_path: Path) -> Dict[str, Dict[str, Any]]:
                 continue
             
             entry = json.loads(line)
+            # Skip event-type entries (written by append_trade_event; no 'status' field)
+            status = entry.get("status")
+            if status is None:
+                continue
             candidate_id = entry["candidate_id"]
-            status = entry["status"]
             
             if status == "OPEN":
                 # Initialize trade record
