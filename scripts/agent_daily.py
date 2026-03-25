@@ -14,8 +14,10 @@ Orchestrates:
 6. Global pointer write: <runs_root>/agent_last_run.json
 7. Compact stdout summary
 
-No LLM calls. No autonomous decisions. No order submission.
-All actions are read/write to local filesystem only.
+Optional LLM analyst layer (--analyst flag) calls OpenAI for an advisory
+recommendation. Analyst output is written to a separate artifact and is
+never merged into the decision packet. No autonomous action is taken.
+All other actions are read/write to local filesystem only.
 
 Returns the decision packet dict (for testability when called as a function).
 
@@ -54,6 +56,7 @@ sys.path.insert(0, str(_SCRIPTS_DIR))
 from forecast_arb.ops.preflight import run_broker_preflight
 from forecast_arb.core.decision_packet import build_decision_packet
 from forecast_arb.ops.summary import render_operator_summary
+from forecast_arb.ops.analyst import run_analyst
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +84,11 @@ def run_agent_daily(
     snapshot_path: Optional[str] = None,
     ibkr_host: str = "127.0.0.1",
     ibkr_port: int = 7496,
+    # optional analyst layer
+    analyst: bool = False,
 ) -> Dict[str, Any]:
     """
-    Run the full agent daily pipeline (non-interactive, no LLM, no orders).
+    Run the full agent daily pipeline (non-interactive, no autonomous orders).
 
     Args:
         runs_root:            Base directory for run output (absolute path recommended).
@@ -100,9 +105,14 @@ def run_agent_daily(
         min_debit_per_contract: Minimum debit filter.
         snapshot_path:        Optional path to existing IBKR snapshot JSON.
         ibkr_host/ibkr_port:  IBKR gateway connection params.
+        analyst:              If True, call run_analyst() after building packet.
+                              Result written to artifacts/analyst_recommendation.json.
+                              Analyst failure is non-fatal.
 
     Returns:
         Decision packet dict (schema_version "2.0").
+        If analyst=True, packet["_analyst"] holds the analyst result dict
+        (underscore-prefixed; not written to operator_summary.json).
     """
     from run_daily_v2 import run_daily_core
 
@@ -199,7 +209,22 @@ def run_agent_daily(
     logger.info(f"Wrote agent_last_run.json → {last_run_path}")
 
     # ------------------------------------------------------------------
-    # Step 7: Compact stdout summary
+    # Step 7 (optional): Analyst layer
+    # ------------------------------------------------------------------
+    if analyst:
+        logger.info("Running analyst...")
+        analyst_result = run_analyst(packet, md_text)
+        analyst_path = artifacts_dir / "analyst_recommendation.json"
+        with open(analyst_path, "w", encoding="utf-8") as fh:
+            json.dump(analyst_result, fh, indent=2)
+        logger.info(f"Wrote analyst_recommendation.json → {analyst_path}")
+        # Attach to in-memory packet for testability (not written to operator_summary.json)
+        packet["_analyst"] = analyst_result
+    else:
+        analyst_result = None
+
+    # ------------------------------------------------------------------
+    # Step 8: Compact stdout summary
     # ------------------------------------------------------------------
     notes_str = ", ".join(packet.get("notes", [])) or "none"
     print(f"[agent_daily] run_id={run_id}")
@@ -207,6 +232,9 @@ def run_agent_daily(
     print(f"[agent_daily] decision={decision}  candidates={num_candidates}")
     print(f"[agent_daily] notes={notes_str}")
     print(f"[agent_daily] summary → {summary_md_path}")
+    if analyst_result is not None:
+        rec = analyst_result.get("recommendation") or analyst_result.get("status", "ERROR").upper()
+        print(f"[agent_daily] analyst={rec}")
 
     return packet
 
@@ -256,6 +284,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="IBKR gateway host.")
     p.add_argument("--ibkr-port", type=int, default=7496,
                    help="IBKR gateway port.")
+    p.add_argument("--analyst", action="store_true", default=False,
+                   help="Call OpenAI analyst after building the decision packet. "
+                        "Requires OPENAI_API_KEY env var. Advisory only.")
     p.add_argument("--log-level", default="INFO",
                    choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                    help="Logging level.")
@@ -288,6 +319,7 @@ def main() -> None:
             snapshot_path=args.snapshot,
             ibkr_host=args.ibkr_host,
             ibkr_port=args.ibkr_port,
+            analyst=args.analyst,
         )
     except RuntimeError as exc:
         logger.error(f"Agent daily run failed: {exc}", exc_info=True)
