@@ -1,0 +1,48 @@
+# Campaign Matrix v1 Configuration
+# Phase 3: Multi-underlier, multi-regime grid with portfolio-aware governors
+
+underliers:
+  - SPY
+  - QQQ
+
+regimes:
+  - name: crash
+    threshold: -0.15
+  - name: selloff
+    threshold: -0.09
+
+expiry_buckets:
+  - name: dte_30_60
+    dte_min: 30
+    dte_max: 60
+
+# Cluster mapping for diversification control
+cluster_map:
+  SPY: US_INDEX
+  QQQ: US_INDEX
+
+# Hard governors (portfolio constraints)
+governors:
+  # Per-sleeve capital allocation
+  sleeve_usd: 100000
+  
+  # Daily limits on NEW selections
+  daily_premium_cap_usd: 1250
+  cluster_cap_per_day: 1  # Max 1 trade per cluster_id per day
+  
+  # Open position limits by regime
+  max_open_positions_by_regime:
+    crash: 3
+    selloff: 4
+  
+  # Premium at risk caps (FILLED_OPEN positions)
+  # premium_usd = debit_per_contract * qty (no ×100)
+  premium_at_risk_caps_usd:
+    crash: 3000
+    selloff: 4000
+    total: 7000
+
+# Selection logic
+selection:
+  max_trades_per_day: 2
+  scoring: ev_per_dollar  # Sort by ev_per_dollar desc

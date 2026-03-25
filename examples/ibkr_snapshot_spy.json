@@ -1,0 +1,42 @@
+{
+  "snapshot_metadata": {
+    "underlier": "SPY",
+    "snapshot_time": "2026-01-27T17:00:00-05:00",
+    "current_price": 502.45,
+    "dte_min": 28,
+    "dte_max": 35,
+    "strikes_below": 5,
+    "strikes_above": 5,
+    "risk_free_rate": 0.045,
+    "dividend_yield": 0.0135
+  },
+  "expiries": {
+    "20260227": {
+      "expiry_date": "20260227",
+      "calls": [
+        {"strike": 485.0, "bid": 19.25, "ask": 19.75, "last": 19.50, "volume": 125, "open_interest": 1200, "implied_vol": 0.138, "delta": 0.82, "gamma": 0.012, "vega": 0.25, "theta": -0.45},
+        {"strike": 490.0, "bid": 15.10, "ask": 15.60, "last": 15.35, "volume": 210, "open_interest": 2150, "implied_vol": 0.142, "delta": 0.75, "gamma": 0.015, "vega": 0.28, "theta": -0.48},
+        {"strike": 495.0, "bid": 11.40, "ask": 11.90, "last": 11.65, "volume": 350, "open_interest": 3400, "implied_vol": 0.146, "delta": 0.67, "gamma": 0.018, "vega": 0.31, "theta": -0.51},
+        {"strike": 500.0, "bid": 8.25, "ask": 8.75, "last": 8.50, "volume": 580, "open_interest": 5200, "implied_vol": 0.150, "delta": 0.57, "gamma": 0.020, "vega": 0.33, "theta": -0.53},
+        {"strike": 505.0, "bid": 5.75, "ask": 6.25, "last": 6.00, "volume": 425, "open_interest": 4100, "implied_vol": 0.154, "delta": 0.46, "gamma": 0.021, "vega": 0.34, "theta": -0.54},
+        {"strike": 510.0, "bid": 3.90, "ask": 4.40, "last": 4.15, "volume": 310, "open_interest": 2900, "implied_vol": 0.158, "delta": 0.35, "gamma": 0.019, "vega": 0.32, "theta": -0.52},
+        {"strike": 515.0, "bid": 2.50, "ask": 3.00, "last": 2.75, "volume": 195, "open_interest": 1850, "implied_vol": 0.162, "delta": 0.26, "gamma": 0.016, "vega": 0.28, "theta": -0.48},
+        {"strike": 520.0, "bid": 1.55, "ask": 2.05, "last": 1.80, "volume": 120, "open_interest": 1100, "implied_vol": 0.166, "delta": 0.18, "gamma": 0.012, "vega": 0.23, "theta": -0.42},
+        {"strike": 525.0, "bid": 0.90, "ask": 1.40, "last": 1.15, "volume": 80, "open_interest": 650, "implied_vol": 0.170, "delta": 0.12, "gamma": 0.008, "vega": 0.18, "theta": -0.35},
+        {"strike": 530.0, "bid": 0.50, "ask": 1.00, "last": 0.75, "volume": 45, "open_interest": 380, "implied_vol": 0.175, "delta": 0.08, "gamma": 0.005, "vega": 0.13, "theta": -0.28}
+      ],
+      "puts": [
+        {"strike": 485.0, "bid": 2.15, "ask": 2.65, "last": 2.40, "volume": 180, "open_interest": 1650, "implied_vol": 0.140, "delta": -0.18, "gamma": 0.012, "vega": 0.25, "theta": -0.43},
+        {"strike": 490.0, "bid": 3.40, "ask": 3.90, "last": 3.65, "volume": 265, "open_interest": 2850, "implied_vol": 0.144, "delta": -0.25, "gamma": 0.015, "vega": 0.28, "theta": -0.46},
+        {"strike": 495.0, "bid": 5.15, "ask": 5.65, "last": 5.40, "volume": 390, "open_interest": 3900, "implied_vol": 0.148, "delta": -0.33, "gamma": 0.018, "vega": 0.31, "theta": -0.49},
+        {"strike": 500.0, "bid": 7.50, "ask": 8.00, "last": 7.75, "volume": 625, "open_interest": 6100, "implied_vol": 0.150, "delta": -0.43, "gamma": 0.020, "vega": 0.33, "theta": -0.51},
+        {"strike": 505.0, "bid": 10.65, "ask": 11.15, "last": 10.90, "volume": 480, "open_interest": 4850, "implied_vol": 0.152, "delta": -0.54, "gamma": 0.021, "vega": 0.34, "theta": -0.52},
+        {"strike": 510.0, "bid": 14.55, "ask": 15.05, "last": 14.80, "volume": 350, "open_interest": 3450, "implied_vol": 0.156, "delta": -0.65, "gamma": 0.019, "vega": 0.32, "theta": -0.50},
+        {"strike": 515.0, "bid": 19.15, "ask": 19.65, "last": 19.40, "volume": 220, "open_interest": 2200, "implied_vol": 0.160, "delta": -0.74, "gamma": 0.016, "vega": 0.28, "theta": -0.46},
+        {"strike": 520.0, "bid": 24.40, "ask": 24.90, "last": 24.65, "volume": 135, "open_interest": 1350, "implied_vol": 0.164, "delta": -0.82, "gamma": 0.012, "vega": 0.23, "theta": -0.40},
+        {"strike": 525.0, "bid": 30.25, "ask": 30.75, "last": 30.50, "volume": 75, "open_interest": 750, "implied_vol": 0.168, "delta": -0.88, "gamma": 0.008, "vega": 0.18, "theta": -0.33},
+        {"strike": 530.0, "bid": 36.65, "ask": 37.15, "last": 36.90, "volume": 40, "open_interest": 420, "implied_vol": 0.172, "delta": -0.92, "gamma": 0.005, "vega": 0.13, "theta": -0.26}
+      ]
+    }
+  }
+}

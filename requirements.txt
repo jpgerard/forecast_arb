@@ -1,0 +1,16 @@
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+pydantic>=2.0.0
+pyyaml>=6.0
+pandas>=2.0.0
+numpy>=1.24.0
+python-dateutil>=2.8.0
+jsonschema>=4.0.0
+python-dotenv>=1.0.0
+cryptography>=41.0.0
+# Option math libraries
+py_vollib>=1.0.1
+scipy>=1.11.0
+
+# IBKR data export (optional - only needed for live option chain fetching)
+ib_insync>=0.9.86

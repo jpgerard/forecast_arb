@@ -1,0 +1,50 @@
+# Test configuration for crash_venture_v1 tests
+# Uses less aggressive moneyness to work with snapshot data
+
+campaign_name: "crash_venture_v1"
+
+# Structuring parameters
+structuring:
+  underlier: "SPY"
+  
+  dte_range_days:
+    min: 30
+    max: 60
+  
+  # Less aggressive moneyness for testing (closer to ATM)
+  moneyness_targets:
+    - -0.02  # 2% OTM
+    - -0.04  # 4% OTM
+    - -0.06  # 6% OTM
+  
+  spread_widths:
+    - 5
+    - 10
+    - 15
+  
+  constraints:
+    max_loss_usd_per_trade: 500
+    max_candidates_evaluated: 30
+    top_n_output: 3
+    min_open_interest: 500
+    max_option_spread_pct: 0.25
+  
+  monte_carlo:
+    paths: 30000
+    seed_mode: "run_id"
+  
+  objective: "max_ev_per_dollar"
+  
+  output:
+    structures_json: true
+    summary_md: true
+    dry_run_tickets: true
+
+logging:
+  level: "INFO"
+
+storage:
+  path: "runs/forecasts.db"
+
+config_version: "1.0.0-test"
+config_frozen_date: "2026-01-28"

@@ -1,0 +1,169 @@
+{
+  "snapshot_metadata": {
+    "underlier": "SPY",
+    "snapshot_time": "2026-01-27T22:15:00Z",
+    "current_price": 500.25,
+    "expiry": "2026-02-28",
+    "days_to_expiry": 32,
+    "implied_volatility": 0.15
+  },
+  "oracle_input": {
+    "market_id": "INX-26FEB28",
+    "title": "Will S&P 500 be above 5250 on Feb 28?",
+    "p_event": 0.62,
+    "kalshi_bid": 0.60,
+    "kalshi_ask": 0.64,
+    "volume_24h": 15234,
+    "event_definition": "S&P 500 index closes above 5250 on 2026-02-28",
+    "barrier_level": 5250,
+    "barrier_relative": 1.05
+  },
+  "option_chain": {
+    "calls": [
+      {
+        "strike": 480,
+        "bid": 22.50,
+        "ask": 23.00,
+        "last": 22.80,
+        "volume": 1250,
+        "open_interest": 8500,
+        "implied_vol": 0.14
+      },
+      {
+        "strike": 490,
+        "bid": 15.25,
+        "ask": 15.75,
+        "last": 15.50,
+        "volume": 2100,
+        "open_interest": 12300,
+        "implied_vol": 0.145
+      },
+      {
+        "strike": 500,
+        "bid": 9.75,
+        "ask": 10.25,
+        "last": 10.00,
+        "volume": 5800,
+        "open_interest": 25600,
+        "implied_vol": 0.15
+      },
+      {
+        "strike": 510,
+        "bid": 5.50,
+        "ask": 6.00,
+        "last": 5.75,
+        "volume": 3200,
+        "open_interest": 18900,
+        "implied_vol": 0.152
+      },
+      {
+        "strike": 520,
+        "bid": 2.90,
+        "ask": 3.30,
+        "last": 3.10,
+        "volume": 1800,
+        "open_interest": 14200,
+        "implied_vol": 0.155
+      }
+    ],
+    "puts": [
+      {
+        "strike": 480,
+        "bid": 2.40,
+        "ask": 2.80,
+        "last": 2.60,
+        "volume": 1500,
+        "open_interest": 11200,
+        "implied_vol": 0.16
+      },
+      {
+        "strike": 490,
+        "bid": 4.20,
+        "ask": 4.60,
+        "last": 4.40,
+        "volume": 2400,
+        "open_interest": 15800,
+        "implied_vol": 0.155
+      },
+      {
+        "strike": 500,
+        "bid": 7.10,
+        "ask": 7.50,
+        "last": 7.30,
+        "volume": 4200,
+        "open_interest": 22100,
+        "implied_vol": 0.15
+      },
+      {
+        "strike": 510,
+        "bid": 11.50,
+        "ask": 12.00,
+        "last": 11.75,
+        "volume": 2800,
+        "open_interest": 16500,
+        "implied_vol": 0.148
+      },
+      {
+        "strike": 520,
+        "bid": 17.25,
+        "ask": 17.75,
+        "last": 17.50,
+        "volume": 1600,
+        "open_interest": 9800,
+        "implied_vol": 0.145
+      }
+    ]
+  },
+  "candidate_structures": [
+    {
+      "template": "call_spread",
+      "description": "Bullish bet on upward move consistent with Kalshi p_event=0.62",
+      "legs": [
+        {"type": "call", "strike": 500, "side": "long", "contracts": 1, "price": 10.00},
+        {"type": "call", "strike": 510, "side": "short", "contracts": 1, "price": 5.75}
+      ],
+      "net_premium": -4.25,
+      "max_gain": 5.75,
+      "max_loss": -4.25,
+      "breakeven": 504.25
+    },
+    {
+      "template": "put_spread",
+      "description": "Bearish hedge if Oracle probability is wrong",
+      "legs": [
+        {"type": "put", "strike": 500, "side": "long", "contracts": 1, "price": 7.30},
+        {"type": "put", "strike": 490, "side": "short", "contracts": 1, "price": 4.40}
+      ],
+      "net_premium": -2.90,
+      "max_gain": 7.10,
+      "max_loss": -2.90,
+      "breakeven": 497.10
+    },
+    {
+      "template": "strangle",
+      "description": "High volatility play if outcome uncertain",
+      "legs": [
+        {"type": "put", "strike": 490, "side": "long", "contracts": 1, "price": 4.40},
+        {"type": "call", "strike": 510, "side": "long", "contracts": 1, "price": 5.75}
+      ],
+      "net_premium": -10.15,
+      "max_gain": "unlimited",
+      "max_loss": -10.15,
+      "breakevens": [479.85, 520.15]
+    }
+  ],
+  "calibration_params": {
+    "risk_free_rate": 0.05,
+    "time_to_expiry_years": 0.0876,
+    "target_barrier": 525.0,
+    "calibrated_drift_mu": 0.685,
+    "drift_explanation": "Given p_event=0.62 for crossing 5% barrier, calibrated μ=0.685 ann."
+  },
+  "monte_carlo_config": {
+    "n_paths": 30000,
+    "seed": 42,
+    "S0": 500.25,
+    "sigma": 0.15,
+    "method": "geometric_brownian_motion"
+  }
+}

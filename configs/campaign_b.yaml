@@ -1,0 +1,91 @@
+campaign_name: campaign_b
+
+# Universe selection by bucket
+universe:
+  buckets:
+    FED:
+      series: ["FED", "FOMC"]
+      tags: ["interest-rates", "federal-reserve"]
+      tickers: ["FEDFUNDS"]
+    CPI:
+      series: ["CPI", "INFLATION"]
+      tags: ["inflation", "cpi"]
+      tickers: ["CPIYY"]
+    RATES_10Y:
+      series: ["TREASURY", "BONDS"]
+      tags: ["bonds", "treasury", "10-year"]
+      tickers: ["T10Y"]
+    SP500_RANGE:
+      series: ["SPX", "STOCKS"]
+      tags: ["sp500", "stocks"]
+      tickers: ["SPX"]
+  
+  max_markets_per_bucket: 5
+  status: "open"  # only open markets
+
+# LLM configuration
+llm:
+  provider: openai
+  model: gpt-4o
+  temperature: 0
+  max_delta_logit: 2.0
+  api_key_env: OPENAI_API_KEY  # read from environment variable
+
+# Trade routing rules
+routing:
+  edge_min: 0.05              # minimum edge (probability difference)
+  max_spread_cents: 5         # max bid-ask spread in cents
+  min_volume_24h: 1000        # minimum 24h trading volume
+  confidence_min: med         # minimum confidence level (low/med/high)
+
+# Evidence gathering configuration
+evidence:
+  items_per_market_range: [3, 12]  # min/max evidence items per market
+  cache_ttl_hours: 24              # cache TTL in hours
+  max_age_days: 7                  # ignore evidence older than this
+  
+  # Allowlist per bucket
+  sources:
+    FED:
+      primary:
+        - federalreserve.gov
+        - fred.stlouisfed.org
+      secondary:
+        - wsj.com
+    CPI:
+      primary:
+        - bls.gov
+        - fred.stlouisfed.org
+      secondary:
+        - reuters.com
+    RATES_10Y:
+      primary:
+        - treasury.gov
+        - fred.stlouisfed.org
+      secondary:
+        - bloomberg.com
+    SP500_RANGE:
+      primary:
+        - fred.stlouisfed.org
+      secondary:
+        - finance.yahoo.com
+
+# Storage configuration
+storage:
+  type: sqlite
+  path: runs/forecasts.db
+
+# Kalshi API configuration
+kalshi:
+  base_url: https://api.kalshi.com/trade-api/v2
+  api_key_env: KALSHI_API_KEY      # read from environment variable
+  api_secret_env: KALSHI_API_SECRET
+  rate_limit_per_second: 10
+
+# Run mode
+mode: paper  # paper | placebo_no_evidence | placebo_shuffled_order
+
+# Logging
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

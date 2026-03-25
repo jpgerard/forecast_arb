@@ -1,0 +1,66 @@
+# ============================================================================
+# CRASH VENTURE V1 - FROZEN CONFIGURATION
+# ============================================================================
+# DO NOT MODIFY: This configuration is locked for Campaign "Crash Venture v1"
+# Any modification will result in a new campaign ID via checksum validation
+# 
+# Purpose: Generate 1-3 clean, executable SPY put-spread trade candidates
+# ============================================================================
+
+campaign_name: "crash_venture_v1"
+
+# Structuring parameters (FROZEN - NO OVERRIDES)
+structuring:
+  # Underlier constraint
+  underlier: "SPY"
+  
+  # Days to expiration range
+  dte_range_days:
+    min: 30
+    max: 60
+  
+  # Target moneyness levels (negative = OTM puts)
+  moneyness_targets:
+    - -0.10  # 10% OTM
+    - -0.15  # 15% OTM
+    - -0.20  # 20% OTM
+  
+  # Spread widths in dollars
+  spread_widths:
+    - 5
+    - 10
+    - 15
+  
+  # Risk constraints
+  constraints:
+    max_loss_usd_per_trade: 500
+    max_candidates_evaluated: 30
+    top_n_output: 3
+    min_open_interest: 500
+    max_option_spread_pct: 0.25
+  
+  # Monte Carlo simulation
+  monte_carlo:
+    paths: 30000
+    seed_mode: "run_id"  # Derive seed from run_id for determinism
+  
+  # Optimization objective
+  objective: "max_ev_per_dollar"  # Maximize expected value per dollar risked
+  
+  # Output format
+  output:
+    structures_json: true
+    summary_md: true
+    dry_run_tickets: true
+
+# Logging
+logging:
+  level: "INFO"
+
+# Storage
+storage:
+  path: "runs/forecasts.db"
+
+# Version tracking (for checksum validation)
+config_version: "1.0.0"
+config_frozen_date: "2026-01-28"

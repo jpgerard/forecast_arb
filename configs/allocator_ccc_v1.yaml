@@ -1,0 +1,251 @@
+# CCC v1 Allocator Policy Configuration
+# Cost-Controlled Convexity Allocator — locked v1 parameters
+# v1.9 additions: crash ladder, roll discipline, fragility gating
+
+policy_id: ccc_v1
+
+# ---------------------------------------------------------------------------
+# Soft budget caps (operating limits, not hard stops)
+# Hard rails remain in campaign_v1.yaml governors
+# ---------------------------------------------------------------------------
+budgets:
+  # Monthly limits
+  monthly_baseline: 1000.0    # baseline monthly spend cap ($)
+  monthly_max: 2000.0         # max if kicker enabled ($)
+
+  # Weekly limits
+  weekly_baseline: 250.0      # baseline weekly spend cap ($)
+  weekly_kicker: 500.0        # kicker weekly cap ($)
+
+  # Daily limits
+  daily_baseline: 50.0        # baseline daily spend cap ($)
+  daily_kicker: 100.0         # kicker daily cap ($)
+
+  # Phase 2A Task A: annual convexity budget (hard annual premium burn limit)
+  # When YTD premium spent >= this value, all new OPEN actions are blocked with
+  # reason code BUDGET_ANNUAL_CAP until the next calendar year.
+  # Set to a very large number or remove to disable.
+  annual_convexity_budget: 30000.0  # annual premium spend cap ($)
+
+# ---------------------------------------------------------------------------
+# Inventory soft targets  (preferred steady-state number of open positions)
+#
+# CCC v2.1: These are SOFT targets. They influence threshold tiers:
+#   - crash_open < crash target  → use fill_when_empty EV thresholds (relaxed)
+#   - crash_open >= crash target → use add_when_full  EV thresholds (strict)
+#
+# They do NOT block OPENs when premium_at_risk_caps is configured and below cap.
+# Hard absolute limits are configured separately in inventory_hard_caps below.
+# ---------------------------------------------------------------------------
+inventory_targets:
+  crash: 1    # preferred minimum — influences EV tier only (soft)
+  selloff: 1  # preferred minimum — influences EV tier only (soft)
+
+# ---------------------------------------------------------------------------
+# EV/$ and convexity thresholds — inventory-aware (v1.6)
+#
+# fill_when_empty : used when crash/selloff inventory is BELOW target
+#                   (relaxed — we need to build inventory)
+# add_when_full   : used when inventory is AT or ABOVE target
+#                   (strict  — we only upgrade existing coverage)
+#
+# v1.9 Task B: crash ladder classifies candidates by OTM moneyness.
+#   layer_a: 5–9% OTM  (moderate crash, higher probability of activation)
+#   layer_b: 10–16% OTM (deep crash, lower probability but higher payoff)
+# When inventory is empty (0/1), Layer A candidate is preferred over Layer B
+# unless only one exists.  If ladder section is absent, backward-compat applies.
+# ---------------------------------------------------------------------------
+thresholds:
+  crash:
+    fill_when_empty:
+      ev_per_dollar_implied: 1.45
+      ev_per_dollar_external: 0.45
+      convexity_multiple: 20.0
+    add_when_full:
+      ev_per_dollar_implied: 1.60
+      ev_per_dollar_external: 0.50
+      convexity_multiple: 25.0
+    # v1.9 Task B: crash ladder — classify candidates by moneyness band
+    ladder:
+      layer_a:
+        moneyness_min_pct: 5.0    # % OTM lower bound for Layer A
+        moneyness_max_pct: 9.0    # % OTM upper bound for Layer A
+      layer_b:
+        moneyness_min_pct: 10.0   # % OTM lower bound for Layer B
+        moneyness_max_pct: 16.0   # % OTM upper bound for Layer B
+
+  selloff:
+    fill_when_empty:
+      ev_per_dollar_implied: 1.20
+      ev_per_dollar_external: 0.30
+      convexity_multiple: 12.0
+    add_when_full:
+      ev_per_dollar_implied: 1.30
+      ev_per_dollar_external: 0.30
+      convexity_multiple: 15.0
+
+# ---------------------------------------------------------------------------
+# Harvest rules (mechanical position management)
+# ---------------------------------------------------------------------------
+harvest:
+  # Multiple-based close rules (mark_mid / entry_debit)
+  partial_close_multiple: 2.0    # >= 2.0x entry_debit → close 50% of position
+  full_close_multiple: 3.0       # >= 3.0x entry_debit → close remainder
+  partial_close_fraction: 0.5    # fraction to close on partial trigger (ceil rounding)
+
+  # Time-stop rule
+  time_stop_dte: 14              # if DTE <= 14 days...
+  time_stop_min_multiple: 1.2   #   ...and mark < 1.2x entry_debit → close (roll eligible)
+
+# ---------------------------------------------------------------------------
+# v1.9 Task C: Roll-forward discipline
+#
+# Separate from harvest time-stop.  Roll is about maintaining convexity;
+# harvest is about monetization.
+#
+# A position is rolled when ALL: DTE <= dte_max_for_roll AND at least one of:
+#   - mark_multiple  < min_multiple_to_hold
+#   - convexity_now  < min_convexity_multiple_to_hold
+#     where convexity_now = max_gain_per_contract / mark_mid
+#
+# A ROLL_CLOSE action frees the slot for a replacement OPEN in the same regime
+# within the same plan run (even if pending intents exist for that regime).
+#
+# Set enabled: false to disable roll discipline entirely (backward compat).
+# ---------------------------------------------------------------------------
+roll:
+  enabled: true
+  dte_max_for_roll: 21                    # rolling window (DTE <= this)
+  min_multiple_to_hold: 1.10             # close if mark/entry_debit < 1.10x
+  min_convexity_multiple_to_hold: 8.0   # close if max_gain/mark < 8.0x
+
+# ---------------------------------------------------------------------------
+# Close-liquidity guard
+# Before issuing HARVEST_CLOSE / ROLL_CLOSE, check that the spread is not
+# too wide relative to mid. Wide markets destroy harvest benefit.
+# ---------------------------------------------------------------------------
+close_liquidity_guard:
+  max_width_pct: 0.25   # if (ask - bid) / mid > 25% → HOLD with WIDE_MARKET_NO_CLOSE
+
+# ---------------------------------------------------------------------------
+# Daily action caps
+# ---------------------------------------------------------------------------
+limits:
+  max_open_actions_per_day: 1    # max OPEN actions per allocator run
+  max_close_actions_per_day: 2   # max HARVEST_CLOSE + ROLL_CLOSE per run
+
+# ---------------------------------------------------------------------------
+# Auto-sizing
+# ---------------------------------------------------------------------------
+sizing:
+  max_qty_per_trade: 10          # hard maximum qty per OPEN action
+
+# ---------------------------------------------------------------------------
+# Kicker eligibility (all conditions must be true)
+# If any signal is missing → no kicker (conservative default)
+# ---------------------------------------------------------------------------
+kicker:
+  min_conditioning_confidence: 0.66   # conditioning model confidence >= 66%
+  max_vix_percentile: 35.0            # VIX must be below 35th percentile
+  # credit_stress_elevated checked from signals dict (bool)
+  # skew signals: not yet implemented, omit until coverage exists
+
+# ---------------------------------------------------------------------------
+# v1.9 Task E: Fragility gating (EV shock test)
+#
+# Before allowing an OPEN, stress-test EV under simultaneous adverse shocks:
+#   p_shock   = p_used - p_downshift_pp/100   (lower probability)
+#   prem_shock = premium_used * (1 + debit_upshift_pct/100)  (higher debit)
+#   EV_shock = p_shock * max_gain - (1 - p_shock) * prem_shock
+#
+# If EV_shock <= 0 (position is fragile):
+#   - If inventory is empty (0/1) and allow_if_inventory_empty: ALLOW + tag FRAGILE_ALLOWED_EMPTY
+#   - Else: HOLD with reason EV_FRAGILE_UNDER_SHOCKS
+#
+# Set enabled: false to disable fragility gating entirely (backward compat).
+# Both p_used and max_gain_per_contract must be present in the candidate
+# for fragility to be evaluated; if either is missing, the check is skipped.
+# ---------------------------------------------------------------------------
+robustness:
+  enabled: true
+  p_downshift_pp: 3.0          # shift probability down by 3 percentage points
+  debit_upshift_pct: 10.0      # inflate debit by 10%
+  require_positive_ev_under_shocks: true
+  allow_if_inventory_empty: true   # allow fragile OPEN only when inv=0 (fill mode)
+
+# ---------------------------------------------------------------------------
+# Phase 2A Task C: Strike diversity guard
+#
+# Before approving any new OPEN, compare the candidate's long_strike against:
+#   - each existing open position (same underlier + same regime)
+#   - each OPEN already approved in the current planning run (same underlier + regime)
+#
+# Reject if:  abs(candidate.long_strike - existing.long_strike) / spot
+#                 < min_strike_distance_pct / 100
+#
+# Reason codes emitted: STRIKE_TOO_CLOSE + metadata
+#
+# Set min_strike_distance_pct: 0.0 or remove section to disable.
+# Backward-compat: if diversity section absent → gate disabled entirely.
+# If spot is missing from candidate → check is skipped (no crash, no block).
+# Scope: same underlier + same regime only (never cross-underlier or cross-regime).
+# ---------------------------------------------------------------------------
+diversity:
+  min_strike_distance_pct: 3.0   # reject if long_strike is within 3% of spot distance
+
+# ---------------------------------------------------------------------------
+# v2.0: Premium-at-risk caps (primary economic gate — CCC v2.0)
+#
+# Primary gating switches from "crash_open >= target_count" to a premium-
+# at-risk budget per regime and in total.
+#
+# Behavior when this section is present (enabled=True):
+#   - Block OPEN if projected crash premium-at-risk exceeds crash cap
+#   - Block OPEN if projected selloff premium-at-risk exceeds selloff cap
+#   - Block OPEN if projected total premium-at-risk exceeds total cap
+#   - Count (inventory_hard_caps) remains as an absolute secondary backstop
+#   - Soft count target (inventory_targets) influences thresholds (add_when_full
+#     vs fill_when_empty) but does NOT block OPENs when PAR budget allows it
+#
+# When section is absent → caps default to float('inf') → gate disabled
+# → backward-compatible with pre-v2.0 configs.
+#
+# dollar amounts are per-contract premiums × qty_open  (e.g., $45/c × 2 = $90)
+# ---------------------------------------------------------------------------
+premium_at_risk_caps:
+  crash:   500.0    # max total crash premium at risk ($)
+  selloff: 300.0    # max total selloff premium at risk ($)
+  total:   750.0    # max combined premium at risk across all regimes ($)
+
+# ---------------------------------------------------------------------------
+# v2.1: Inventory hard caps (absolute count backstop — secondary gate)
+#
+# These are HARD absolute limits on position count.
+# DISTINCT from inventory_targets (soft/preferred steady-state counts).
+#
+# Design intent (CCC v2.1):
+#   PRIMARY gate  = premium_at_risk_caps  (economic budget)
+#   SECONDARY gate = inventory_hard_caps  (count backstop vs over-fragmentation)
+#   INFORMATIONAL  = inventory_targets    (soft preference; influences EV tier only)
+#
+# Behavior:
+#   - An OPEN is evaluated for PAR budget first (primary gate).
+#   - An OPEN is blocked absolutely when crash_open >= inventory_hard_caps.crash
+#     regardless of PAR budget (hard backstop against over-fragmentation).
+#   - When this section is absent, fallback = max(inventory_target, floor)
+#     where floor = crash:3, selloff:2 (prevents soft target from acting as hard cap).
+#
+# Example: with crash soft_target=1, hard_cap=5, PAR_cap=$500:
+#   crash=3 positions (PAR=$122.80) → below hard cap → PAR evaluated → OPEN ALLOWED
+#   crash=5 positions              → hard cap reached → HARD_COUNT_CAP  → BLOCKED
+# ---------------------------------------------------------------------------
+inventory_hard_caps:
+  crash:   5    # absolute maximum crash open positions (soft target=1, PAR cap=$500)
+  selloff: 3    # absolute maximum selloff open positions (soft target=1, PAR cap=$300)
+
+# ---------------------------------------------------------------------------
+# Output paths (relative to project root)
+# ---------------------------------------------------------------------------
+ledger_dir: runs/allocator         # appends to runs/allocator/allocator_ledger.jsonl
+output_dir: runs/allocator         # writes runs/allocator/allocator_actions.json
+intents_dir: intents/allocator     # writes close intent JSON files here

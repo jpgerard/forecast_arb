@@ -1,0 +1,41 @@
+{
+  "snapshot_metadata": {
+    "underlier": "SPY",
+    "snapshot_time": "2026-01-27T17:00:00-05:00",
+    "current_price": 502.45,
+    "dte_min": 28,
+    "dte_max": 35,
+    "strikes_below": 15,
+    "strikes_above": 15,
+    "risk_free_rate": 0.045,
+    "dividend_yield": 0.0135
+  },
+  "expiries": {
+    "20260227": {
+      "expiry_date": "20260227",
+      "calls": [],
+      "puts": [
+        {"strike": 400.0, "bid": 0.01, "ask": 0.02, "last": 0.01, "volume": 10, "open_interest": 150, "implied_vol": 0.180, "delta": -0.01, "gamma": 0.001, "vega": 0.05, "theta": -0.10},
+        {"strike": 410.0, "bid": 0.02, "ask": 0.03, "last": 0.02, "volume": 15, "open_interest": 200, "implied_vol": 0.175, "delta": -0.02, "gamma": 0.002, "vega": 0.06, "theta": -0.12},
+        {"strike": 420.0, "bid": 0.03, "ask": 0.05, "last": 0.04, "volume": 20, "open_interest": 250, "implied_vol": 0.170, "delta": -0.03, "gamma": 0.003, "vega": 0.07, "theta": -0.15},
+        {"strike": 430.0, "bid": 0.05, "ask": 0.08, "last": 0.06, "volume": 25, "open_interest": 300, "implied_vol": 0.165, "delta": -0.04, "gamma": 0.004, "vega": 0.08, "theta": -0.18},
+        {"strike": 440.0, "bid": 0.10, "ask": 0.15, "last": 0.12, "volume": 35, "open_interest": 400, "implied_vol": 0.160, "delta": -0.06, "gamma": 0.005, "vega": 0.10, "theta": -0.20},
+        {"strike": 450.0, "bid": 0.20, "ask": 0.30, "last": 0.25, "volume": 50, "open_interest": 550, "implied_vol": 0.155, "delta": -0.09, "gamma": 0.007, "vega": 0.13, "theta": -0.25},
+        {"strike": 460.0, "bid": 0.45, "ask": 0.60, "last": 0.52, "volume": 80, "open_interest": 800, "implied_vol": 0.150, "delta": -0.12, "gamma": 0.009, "vega": 0.17, "theta": -0.30},
+        {"strike": 470.0, "bid": 0.95, "ask": 1.20, "last": 1.07, "volume": 120, "open_interest": 1100, "implied_vol": 0.145, "delta": -0.16, "gamma": 0.011, "vega": 0.21, "theta": -0.35},
+        {"strike": 475.0, "bid": 1.35, "ask": 1.65, "last": 1.50, "volume": 150, "open_interest": 1400, "implied_vol": 0.143, "delta": -0.18, "gamma": 0.012, "vega": 0.23, "theta": -0.38},
+        {"strike": 480.0, "bid": 1.85, "ask": 2.20, "last": 2.02, "volume": 170, "open_interest": 1550, "implied_vol": 0.141, "delta": -0.20, "gamma": 0.013, "vega": 0.25, "theta": -0.41},
+        {"strike": 485.0, "bid": 2.50, "ask": 2.90, "last": 2.70, "volume": 180, "open_interest": 1650, "implied_vol": 0.140, "delta": -0.23, "gamma": 0.014, "vega": 0.27, "theta": -0.43},
+        {"strike": 490.0, "bid": 3.40, "ask": 3.90, "last": 3.65, "volume": 265, "open_interest": 2850, "implied_vol": 0.144, "delta": -0.25, "gamma": 0.015, "vega": 0.28, "theta": -0.46},
+        {"strike": 495.0, "bid": 5.15, "ask": 5.65, "last": 5.40, "volume": 390, "open_interest": 3900, "implied_vol": 0.148, "delta": -0.33, "gamma": 0.018, "vega": 0.31, "theta": -0.49},
+        {"strike": 500.0, "bid": 7.50, "ask": 8.00, "last": 7.75, "volume": 625, "open_interest": 6100, "implied_vol": 0.150, "delta": -0.43, "gamma": 0.020, "vega": 0.33, "theta": -0.51},
+        {"strike": 505.0, "bid": 10.65, "ask": 11.15, "last": 10.90, "volume": 480, "open_interest": 4850, "implied_vol": 0.152, "delta": -0.54, "gamma": 0.021, "vega": 0.34, "theta": -0.52},
+        {"strike": 510.0, "bid": 14.55, "ask": 15.05, "last": 14.80, "volume": 350, "open_interest": 3450, "implied_vol": 0.156, "delta": -0.65, "gamma": 0.019, "vega": 0.32, "theta": -0.50},
+        {"strike": 515.0, "bid": 19.15, "ask": 19.65, "last": 19.40, "volume": 220, "open_interest": 2200, "implied_vol": 0.160, "delta": -0.74, "gamma": 0.016, "vega": 0.28, "theta": -0.46},
+        {"strike": 520.0, "bid": 24.40, "ask": 24.90, "last": 24.65, "volume": 135, "open_interest": 1350, "implied_vol": 0.164, "delta": -0.82, "gamma": 0.012, "vega": 0.23, "theta": -0.40},
+        {"strike": 525.0, "bid": 30.25, "ask": 30.75, "last": 30.50, "volume": 75, "open_interest": 750, "implied_vol": 0.168, "delta": -0.88, "gamma": 0.008, "vega": 0.18, "theta": -0.33},
+        {"strike": 530.0, "bid": 36.65, "ask": 37.15, "last": 36.90, "volume": 40, "open_interest": 420, "implied_vol": 0.172, "delta": -0.92, "gamma": 0.005, "vega": 0.13, "theta": -0.26}
+      ]
+    }
+  }
+}

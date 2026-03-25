@@ -1,0 +1,68 @@
+# Crash Venture v2 Configuration
+# Two-regime system: crash + selloff with deterministic regime selection
+
+campaign_name: crash_venture_v2
+config_version: "2.0.0"
+
+# Regime Selector Thresholds
+regime_selector:
+  crash_p_threshold: 0.015      # 1.5% max for crash eligibility
+  selloff_p_min: 0.08           # 8% min for selloff eligibility
+  selloff_p_max: 0.25           # 25% max (normal band)
+  drawdown_threshold: 0.05      # 5% for crash override (optional)
+  min_skew_threshold: null      # Not yet implemented
+
+# Regime-Specific Overlays
+regimes:
+  crash:
+    moneyness: -0.15            # -15% below spot (crash event)
+    min_otm_boundary: -0.13     # Guardrail: prevent overlap with selloff
+    
+  selloff:
+    moneyness: -0.09            # -9% below spot (selloff event)
+    otm_bounds: [-0.07, -0.12]  # Guardrail: -7% to -12% OTM
+
+# Base Structuring Parameters (shared by all regimes)
+structuring:
+  underlier: SPY
+  
+  dte_range_days:
+    min: 30
+    max: 60
+  
+  # Base moneyness targets (overridden by regime-specific)
+  moneyness_targets:
+    - -0.15
+  
+  spread_widths:
+    - 15
+    - 20
+  
+  constraints:
+    max_loss_usd_per_trade: 10000
+    max_candidates_evaluated: 20
+    top_n_output: 3
+  
+  monte_carlo:
+    paths: 10000
+    horizon_days: 45
+  
+  objective: "max_ev_per_dollar"
+  
+  output:
+    structures_json: true
+    summary_md: true
+    dry_run_tickets: true
+
+# Edge Gating (base settings, moneyness overridden by regime)
+edge_gating:
+  event_moneyness: -0.15  # Default (overridden by regime overlay)
+  min_edge: 0.05
+  min_confidence: 0.60
+
+# Risk Management
+risk_management:
+  campaign_max_loss_cap: null  # Not yet enforced
+
+# Minimum Debit Filter (in USD per contract)
+min_debit_per_contract: 30.0
