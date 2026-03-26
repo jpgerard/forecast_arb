@@ -746,6 +746,212 @@ def run_regime(
         )
 
 
+def run_daily_core(
+    regime: str,
+    underlier: str,
+    dte_min: int,
+    dte_max: int,
+    p_event_source: str,
+    fallback_p: float,
+    campaign_config: str,
+    min_debit_per_contract: float,
+    snapshot_path: Optional[str] = None,
+    ibkr_host: str = "127.0.0.1",
+    ibkr_port: int = 7496,
+    runs_root: Path = Path("runs"),
+) -> Dict:
+    """
+    Deterministic daily run: snapshot → regime resolution → structuring →
+    artifact writing.  Returns a result dict; never calls sys.exit().
+
+    Steps covered:
+      1. Load config and compute checksum
+      2. Fetch or load IBKR snapshot
+      3. Resolve regimes to run
+      4. Fetch p_external (shared across regimes)
+      5. Run structuring for each regime via run_regime()
+      6. Write unified artifacts and regime ledgers
+
+    Index / latest-pointer publishing (Step 7) is deliberately NOT performed
+    here — that side effect belongs in the CLI caller (main()).
+
+    Args:
+        regime:                  Regime flag ("auto", "crash", "selloff", "both")
+        underlier:               Ticker symbol (e.g. "SPY")
+        dte_min:                 Minimum days to expiry
+        dte_max:                 Maximum days to expiry
+        p_event_source:          Probability source ("kalshi-auto" | "fallback")
+        fallback_p:              Fallback p_external when Kalshi unavailable
+        campaign_config:         Path string to YAML config file
+        min_debit_per_contract:  Minimum debit filter for structuring
+        snapshot_path:           Path to existing snapshot JSON; None → fetch live
+        ibkr_host:               IBKR host for live snapshot fetch
+        ibkr_port:               IBKR port for live snapshot fetch
+        runs_root:               Root directory for run output (default: Path("runs"))
+
+    Returns:
+        {
+            "run_id":         str,
+            "run_dir":        Path,
+            "regimes_run":    list[str],
+            "regime_results": dict,       # regime name → RegimeResult
+            "snapshot_path":  str,
+            "config_checksum": str,
+            "ts_utc":         str,
+        }
+
+    Raises:
+        RuntimeError: on fatal errors (missing expiry, snapshot failure, etc.)
+    """
+    import yaml
+    ts_utc = datetime.now(timezone.utc).isoformat()
+
+    # Step 1: Load config
+    with open(campaign_config, "r") as f:
+        config = yaml.safe_load(f)
+
+    config_checksum = compute_config_checksum(config)
+
+    # Step 2: Snapshot
+    logger.info("Step 1: IBKR Snapshot")
+    logger.info("-" * 80)
+
+    try:
+        resolved_snapshot_path = fetch_or_create_snapshot(
+            underlier=underlier,
+            dte_min=dte_min,
+            dte_max=dte_max,
+            snapshot_path=snapshot_path,
+            ibkr_host=ibkr_host,
+            ibkr_port=ibkr_port,
+        )
+
+        snapshot = load_snapshot(resolved_snapshot_path)
+        validate_snapshot(snapshot)
+        metadata = get_snapshot_metadata(snapshot)
+
+        logger.info("✓ Snapshot validated")
+        logger.info(f"  Underlier: {metadata['underlier']}")
+        logger.info(f"  Spot: ${metadata['current_price']:.2f}")
+        logger.info(f"  Expiries: {len(get_expiries(snapshot))}")
+        logger.info("")
+
+    except Exception as exc:
+        raise RuntimeError(f"Snapshot failed: {exc}") from exc
+
+    # Step 3: Resolve regimes
+    logger.info("Step 2: Regime Resolution")
+    logger.info("-" * 80)
+
+    selector_inputs = None
+    if regime == "auto":
+        logger.warning("⚠️  Auto mode not fully implemented, defaulting to crash")
+        regimes_to_run = ["crash"]
+    else:
+        regimes_to_run = resolve_regimes(
+            regime_flag=regime,
+            selector_inputs=selector_inputs,
+            config=config,
+        )
+
+    logger.info(f"Regimes to run: {regimes_to_run}")
+    logger.info("")
+
+    # Step 4: Fetch p_external (shared across regimes)
+    logger.info("Step 3: External Probability")
+    logger.info("-" * 80)
+
+    edge_gating_config = config.get("edge_gating", {})
+    event_moneyness = edge_gating_config.get("event_moneyness", -0.15)
+
+    from forecast_arb.structuring.expiry_selection import select_best_expiry
+    target_dte_midpoint = (dte_min + dte_max) // 2
+    event_threshold_main = metadata["current_price"] * (1 + event_moneyness)
+
+    target_expiry, _ = select_best_expiry(
+        snapshot=snapshot,
+        target_dte=target_dte_midpoint,
+        dte_min=dte_min,
+        dte_max=dte_max,
+        event_threshold=event_threshold_main,
+    )
+
+    if not target_expiry:
+        raise RuntimeError("No expiry available in snapshot for the requested DTE range")
+
+    p_event_external_block = fetch_p_external(
+        p_event_source=p_event_source,
+        kalshi_ticker=None,
+        fallback_p=fallback_p,
+        metadata=metadata,
+        target_expiry=target_expiry,
+        event_moneyness=event_moneyness,
+    )
+
+    p_external_value = p_event_external_block.get("p")
+    p_ext_display = f"{p_external_value:.3f}" if p_external_value is not None else "None"
+    p_ext_source = p_event_external_block.get("source", "unknown")
+    logger.info(f"p_external: {p_ext_display} (source: {p_ext_source})")
+    if p_event_external_block.get("market") and p_event_external_block["market"].get("ticker"):
+        logger.info(f"  Market: {p_event_external_block['market']['ticker']}")
+        logger.info(
+            f"  Exact match: {p_event_external_block.get('match', {}).get('exact_match', False)}"
+        )
+    logger.info("")
+
+    # Step 5: Run each regime
+    logger.info("Step 4: Multi-Regime Execution")
+    logger.info("-" * 80)
+
+    timestamp = datetime.now(timezone.utc).isoformat().replace(":", "").replace("-", "").replace(".", "")[:15]
+    run_id = f"crash_venture_v2_{config_checksum}_{timestamp}"
+    run_dir = runs_root / "crash_venture_v2" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    results_by_regime = {}
+    for r in regimes_to_run:
+        result = run_regime(
+            regime=r,
+            config=config,
+            snapshot=snapshot,
+            snapshot_path=resolved_snapshot_path,
+            p_event_external=p_event_external_block,
+            min_debit_per_contract=min_debit_per_contract,
+            run_id=run_id,
+        )
+        results_by_regime[r] = result
+        logger.info("")
+
+    # Step 6: Write unified artifacts
+    logger.info("Step 5: Unified Artifacts")
+    logger.info("-" * 80)
+
+    write_unified_artifacts(
+        results_by_regime=results_by_regime,
+        selector_decision=None,
+        run_dir=run_dir,
+    )
+    logger.info("")
+
+    # Step 6b: Write regime ledgers
+    write_regime_ledgers(
+        results_by_regime=results_by_regime,
+        regime_mode=regime.upper(),
+        p_external_value=p_external_value,
+        run_dir=run_dir,
+    )
+
+    return {
+        "run_id": run_id,
+        "run_dir": run_dir,
+        "regimes_run": regimes_to_run,
+        "regime_results": results_by_regime,
+        "snapshot_path": resolved_snapshot_path,
+        "config_checksum": config_checksum,
+        "ts_utc": ts_utc,
+    }
+
+
 def main():
     """Main CLI entrypoint."""
     # Print batch runner header
@@ -902,156 +1108,30 @@ def main():
     logger.info(f"Min Debit: ${args.min_debit_per_contract:.2f}")
     logger.info("")
     
-    # Load config
-    with open(args.campaign_config, "r") as f:
-        config = yaml.safe_load(f)
-    
-    config_checksum = compute_config_checksum(config)
-    
-    # Step 1: Snapshot
-    logger.info("Step 1: IBKR Snapshot")
-    logger.info("-" * 80)
-    
+    # Steps 1-6: deterministic run generation and artifact writing
     try:
-        snapshot_path = fetch_or_create_snapshot(
+        result = run_daily_core(
+            regime=args.regime,
             underlier=args.underlier,
             dte_min=args.dte_min,
             dte_max=args.dte_max,
+            p_event_source=args.p_event_source,
+            fallback_p=args.fallback_p,
+            campaign_config=args.campaign_config,
+            min_debit_per_contract=args.min_debit_per_contract,
             snapshot_path=args.snapshot,
             ibkr_host=args.ibkr_host,
-            ibkr_port=args.ibkr_port
+            ibkr_port=args.ibkr_port,
         )
-        
-        snapshot = load_snapshot(snapshot_path)
-        validate_snapshot(snapshot)
-        metadata = get_snapshot_metadata(snapshot)
-        
-        logger.info(f"✓ Snapshot validated")
-        logger.info(f"  Underlier: {metadata['underlier']}")
-        logger.info(f"  Spot: ${metadata['current_price']:.2f}")
-        logger.info(f"  Expiries: {len(get_expiries(snapshot))}")
-        logger.info("")
-        
-    except Exception as e:
-        logger.error(f"❌ Snapshot failed: {e}", exc_info=True)
+    except RuntimeError as exc:
+        logger.error(f"❌ Run failed: {exc}", exc_info=True)
         sys.exit(1)
-    
-    # Step 2: Resolve regimes
-    logger.info("Step 2: Regime Resolution")
-    logger.info("-" * 80)
-    
-    # For auto mode, we'd need selector inputs (placeholder for now)
-    selector_inputs = None
-    if args.regime == "auto":
-        # Placeholder - would compute from snapshot/external data
-        logger.warning("⚠️  Auto mode not fully implemented, defaulting to crash")
-        regimes_to_run = ["crash"]
-    else:
-        regimes_to_run = resolve_regimes(
-            regime_flag=args.regime,
-            selector_inputs=selector_inputs,
-            config=config
-        )
-    
-    logger.info(f"Regimes to run: {regimes_to_run}")
-    logger.info("")
-    
-    # Step 3: Fetch p_external (shared across regimes)
-    logger.info("Step 3: External Probability")
-    logger.info("-" * 80)
-    
-    # Use crash regime parameters for p_external fetch
-    edge_gating_config = config.get("edge_gating", {})
-    event_moneyness = edge_gating_config.get("event_moneyness", -0.15)
-    
-    # Select expiry for p_external
-    from forecast_arb.structuring.expiry_selection import select_best_expiry
-    target_dte_midpoint = (args.dte_min + args.dte_max) // 2
-    
-    # Calculate event threshold for representability check
-    event_threshold_main = metadata['current_price'] * (1 + event_moneyness)
-    
-    target_expiry, _ = select_best_expiry(
-        snapshot=snapshot,
-        target_dte=target_dte_midpoint,
-        dte_min=args.dte_min,
-        dte_max=args.dte_max,
-        event_threshold=event_threshold_main
-    )
-    
-    if not target_expiry:
-        logger.error("❌ No expiry available")
-        sys.exit(1)
-    
-    p_event_external_block = fetch_p_external(
-        p_event_source=args.p_event_source,
-        kalshi_ticker=None,
-        fallback_p=args.fallback_p,
-        metadata=metadata,
-        target_expiry=target_expiry,
-        event_moneyness=event_moneyness
-    )
-    
-    # Extract value for calibration
-    p_external_value = p_event_external_block.get("p")
-    
-    # Format p_external for display
-    p_ext_display = f"{p_external_value:.3f}" if p_external_value is not None else "None"
-    p_ext_source = p_event_external_block.get("source", "unknown")
-    logger.info(f"p_external: {p_ext_display} (source: {p_ext_source})")
-    
-    # Log market details if available
-    if p_event_external_block.get("market") and p_event_external_block["market"].get("ticker"):
-        logger.info(f"  Market: {p_event_external_block['market']['ticker']}")
-        logger.info(f"  Exact match: {p_event_external_block.get('match', {}).get('exact_match', False)}")
-    logger.info("")
-    
-    # Step 4: Run each regime
-    logger.info("Step 4: Multi-Regime Execution")
-    logger.info("-" * 80)
-    
-    # Generate run ID
-    timestamp = datetime.now(timezone.utc).isoformat().replace(':', '').replace('-', '').replace('.', '')[:15]
-    run_id = f"crash_venture_v2_{config_checksum}_{timestamp}"
-    run_dir = Path(f"runs/crash_venture_v2/{run_id}")
-    run_dir.mkdir(parents=True, exist_ok=True)
-    
-    results_by_regime = {}
-    
-    for regime in regimes_to_run:
-        result = run_regime(
-            regime=regime,
-            config=config,
-            snapshot=snapshot,
-            snapshot_path=snapshot_path,
-            p_event_external=p_event_external_block,
-            min_debit_per_contract=args.min_debit_per_contract,
-            run_id=run_id
-        )
-        
-        results_by_regime[regime] = result
-        logger.info("")
-    
-    # Step 5: Write unified artifacts
-    logger.info("Step 5: Unified Artifacts")
-    logger.info("-" * 80)
-    
-    write_unified_artifacts(
-        results_by_regime=results_by_regime,
-        selector_decision=None,  # Would come from auto mode
-        run_dir=run_dir
-    )
-    
-    logger.info("")
-    
-    # Step 6: Write regime ledgers (AUTOMATIC in v2!)
-    write_regime_ledgers(
-        results_by_regime=results_by_regime,
-        regime_mode=args.regime.upper(),
-        p_external_value=p_external_value,
-        run_dir=run_dir
-    )
-    
+
+    run_id = result["run_id"]
+    run_dir = result["run_dir"]
+    regimes_to_run = result["regimes_run"]
+    results_by_regime = result["regime_results"]
+
     # INTENT EMISSION MODE: Emit intent and exit early
     if args.emit_intent:
         logger.info("")
@@ -1092,7 +1172,9 @@ def main():
             regime=args.regime,
             qty=args.qty,
             limit_start=args.limit_start,
-            limit_max=args.limit_max
+            limit_max=args.limit_max,
+            run_id=run_id,
+            source_run_dir=str(run_dir),
         )
         
         logger.info("OrderIntent generated:")

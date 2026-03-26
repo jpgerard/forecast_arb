@@ -20,7 +20,7 @@ from typing import Dict, List, Any, Optional
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from forecast_arb.core.ledger import append_jsonl
-from forecast_arb.execution.outcome_ledger import read_trade_outcomes
+from forecast_arb.execution.outcome_ledger import read_trade_outcomes, read_trade_events
 from forecast_arb.core.dqs import read_dqs_entries, compute_dqs_summary
 
 
@@ -59,7 +59,7 @@ def generate_weekly_review(
     trade_outcomes_path: Path,
     dqs_ledger_path: Path,
     since: datetime,
-    until: datetime
+    until: datetime,
 ) -> str:
     """
     Generate weekly PM review markdown.
@@ -78,6 +78,7 @@ def generate_weekly_review(
     regime_entries = read_regime_ledger(regime_ledger_path, since, until)
     trade_outcomes = read_trade_outcomes(trade_outcomes_path)
     dqs_entries = read_dqs_entries(dqs_ledger_path)
+    all_events = read_trade_events(trade_outcomes_path)
     
     # Filter trade outcomes by date range
     trades_in_range = []
@@ -173,6 +174,45 @@ def generate_weekly_review(
             lines.append(f"**Total P&L (Closed Trades):** ${total_pnl:.2f}")
             lines.append(f"")
     
+    # Quote Activity
+    lines.append(f"## Quote Activity")
+    lines.append(f"")
+
+    # Filter event entries to the date range using timestamp_utc
+    events_in_range = []
+    for ev in all_events:
+        ts_raw = ev.get("timestamp_utc") or ev.get("ts_utc")
+        if not ts_raw:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+            if since <= ts <= until:
+                events_in_range.append(ev)
+        except (ValueError, TypeError):
+            continue
+
+    if not events_in_range:
+        lines.append(f"*No quote events recorded in this period.*")
+        lines.append(f"")
+    else:
+        _event_counts: Dict[str, int] = {}
+        for ev in events_in_range:
+            etype = ev.get("event", "UNKNOWN")
+            _event_counts[etype] = _event_counts.get(etype, 0) + 1
+
+        lines.append(f"| Event | Count |")
+        lines.append(f"|-------|-------|")
+        for etype in ("QUOTE_OK", "QUOTE_BLOCKED", "STAGED_PAPER", "SUBMITTED_LIVE", "FILLED_OPEN"):
+            if etype in _event_counts:
+                lines.append(f"| {etype} | {_event_counts[etype]} |")
+        # Any unexpected event types
+        for etype, cnt in sorted(_event_counts.items()):
+            if etype not in ("QUOTE_OK", "QUOTE_BLOCKED", "STAGED_PAPER", "SUBMITTED_LIVE", "FILLED_OPEN"):
+                lines.append(f"| {etype} | {cnt} |")
+        lines.append(f"")
+        lines.append(f"**Total Quote Events:** {len(events_in_range)}")
+        lines.append(f"")
+
     # DQS Summary
     lines.append(f"## Decision Quality Summary")
     lines.append(f"")

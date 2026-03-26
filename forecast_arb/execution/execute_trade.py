@@ -772,7 +772,19 @@ def execute_order_intent(
     # SAFETY: transmit requires confirm=SEND (already checked in enforce_mode_invariants)
     if transmit and confirm != "SEND":
         raise ValueError("SAFETY: --transmit requires --confirm SEND")
-    
+
+    # Extract provenance once — top-level fields first, metadata as fallback.
+    # These are used by all ledger-write paths (quote-only, paper, live).
+    _meta = intent.get("metadata", {})
+    _intent_id    = intent["intent_id"]
+    _candidate_id = (
+        intent.get("candidate_id")
+        or _meta.get("candidate_id")
+        or f"unknown_{intent['intent_id'][:8]}"
+    )
+    _run_id  = intent.get("run_id") or "unknown"
+    _regime  = intent.get("regime", "unknown")
+
     # Connect to IBKR
     ib = connect_ibkr(mode=mode, host=host, port=port)
     
@@ -849,7 +861,28 @@ def execute_order_intent(
             logger.info("=" * 80)
             logger.info("✅ QUOTE-ONLY MODE COMPLETE")
             logger.info("=" * 80)
-            
+
+            # PR-EXEC-5: Write quote ledger event even in quote-only mode
+            _quote_event = "QUOTE_OK" if guards_passed else "QUOTE_BLOCKED"
+            _ledger_written = False
+            _ledger_error = None
+            try:
+                from forecast_arb.execution.outcome_ledger import append_trade_event
+                append_trade_event(
+                    event=_quote_event,
+                    intent_id=_intent_id,
+                    candidate_id=_candidate_id,
+                    run_id=_run_id,
+                    regime=_regime,
+                    timestamp_utc=datetime.now(timezone.utc).isoformat(),
+                    also_global=True,
+                )
+                _ledger_written = True
+                logger.info(f"✓ Ledger event written: {_quote_event}")
+            except Exception as _e:
+                _ledger_error = str(_e)
+                logger.warning(f"Failed to write quote ledger event: {_e}")
+
             return {
                 "success": True,
                 "quote_only": True,
@@ -870,7 +903,9 @@ def execute_order_intent(
                     }
                     for quotes, leg_spec in leg_quotes_with_specs
                 ],
-                "timestamp_utc": datetime.now(timezone.utc).isoformat()
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                "ledger_event": _quote_event,
+                "ledger_written": _ledger_written,
             }
         
         # Abort if guards failed
@@ -933,18 +968,12 @@ def execute_order_intent(
         if transmit:
             try:
                 from forecast_arb.execution.outcome_ledger import append_trade_event
-                
-                # Extract metadata
-                candidate_id = intent.get("candidate_id", f"order_{order_id}")
-                run_id = intent.get("run_id", "unknown")
-                regime = intent.get("regime", "unknown")
-                intent_id = intent["intent_id"]  # Now mandatory
-                
+
                 # Extract strikes
                 strikes = sorted([leg["strike"] for leg in intent["legs"]])
                 long_strike = max(strikes) if len(strikes) >= 2 else strikes[0]
                 short_strike = min(strikes) if len(strikes) >= 2 else 0.0
-                
+
                 # Determine event type based on order status
                 if order_status == "Filled":
                     event = "FILLED_OPEN"
@@ -952,20 +981,20 @@ def execute_order_intent(
                     event = "SUBMITTED_LIVE"
                 else:
                     event = "SUBMITTED_LIVE"  # Default for live transmission
-                
-                logger.info(f"Writing trade event: {event} for {candidate_id}...")
-                logger.info(f"  intent_id: {intent_id}")
+
+                logger.info(f"Writing trade event: {event} for {_candidate_id}...")
+                logger.info(f"  intent_id: {_intent_id}")
                 logger.info(f"  order_id: {order_id}")
-                
+
                 # Write event with appropriate fields
                 if event == "FILLED_OPEN":
                     # FILLED_OPEN requires all position fields
                     append_trade_event(
                         event=event,
-                        intent_id=intent_id,
-                        candidate_id=candidate_id,
-                        run_id=run_id,
-                        regime=regime,
+                        intent_id=_intent_id,
+                        candidate_id=_candidate_id,
+                        run_id=_run_id,
+                        regime=_regime,
                         timestamp_utc=execution_result["timestamp_utc"],
                         order_id=str(order_id) if order_id else None,
                         expiry=resolved_expiry,
@@ -973,24 +1002,24 @@ def execute_order_intent(
                         short_strike=short_strike,
                         qty=intent["qty"],
                         entry_price=limit_price,
-                        also_global=True
+                        also_global=True,
                     )
                 else:
                     # SUBMITTED_LIVE only needs basic info
                     append_trade_event(
                         event=event,
-                        intent_id=intent_id,
-                        candidate_id=candidate_id,
-                        run_id=run_id,
-                        regime=regime,
+                        intent_id=_intent_id,
+                        candidate_id=_candidate_id,
+                        run_id=_run_id,
+                        regime=_regime,
                         timestamp_utc=execution_result["timestamp_utc"],
                         order_id=str(order_id) if order_id else None,
-                        also_global=True
+                        also_global=True,
                     )
-                
+
                 logger.info(f"✓ Trade event written: {event}")
                 execution_result["ledger_written"] = True
-                
+
             except Exception as e:
                 logger.warning(f"Failed to write trade event: {e}")
                 execution_result["ledger_written"] = False
@@ -999,28 +1028,23 @@ def execute_order_intent(
             # Paper staging (no transmit)
             try:
                 from forecast_arb.execution.outcome_ledger import append_trade_event
-                
-                candidate_id = intent.get("candidate_id", f"order_{order_id}")
-                run_id = intent.get("run_id", "unknown")
-                regime = intent.get("regime", "unknown")
-                intent_id = intent["intent_id"]
-                
-                logger.info(f"Writing trade event: STAGED_PAPER for {candidate_id}...")
-                
+
+                logger.info(f"Writing trade event: STAGED_PAPER for {_candidate_id}...")
+
                 append_trade_event(
                     event="STAGED_PAPER",
-                    intent_id=intent_id,
-                    candidate_id=candidate_id,
-                    run_id=run_id,
-                    regime=regime,
+                    intent_id=_intent_id,
+                    candidate_id=_candidate_id,
+                    run_id=_run_id,
+                    regime=_regime,
                     timestamp_utc=execution_result["timestamp_utc"],
                     order_id=str(order_id) if order_id else None,
-                    also_global=True
+                    also_global=True,
                 )
-                
+
                 logger.info(f"✓ Trade event written: STAGED_PAPER")
                 execution_result["ledger_written"] = True
-                
+
             except Exception as e:
                 logger.warning(f"Failed to write trade event: {e}")
                 execution_result["ledger_written"] = False

@@ -9,17 +9,19 @@ Tests for PR-EXEC-1 through PR-EXEC-5:
 - PR-EXEC-5: Ledger hook
 """
 
+import json
 import pytest
+from pathlib import Path
 from forecast_arb.execution.execute_trade import (
     enforce_intent_immutability,
     apply_price_band_clamping,
     enforce_mode_invariants,
-    write_ledger_hook,
 )
 from forecast_arb.execution.execution_result import (
     create_execution_result,
     validate_execution_result,
 )
+from forecast_arb.execution.outcome_ledger import append_trade_event, read_trade_events
 
 
 def test_pr_exec_1_intent_immutability_pass():
@@ -239,8 +241,59 @@ def test_pr_exec_4_mode_invariants_live_requires_confirm():
     )
 
 
-def test_pr_exec_5_ledger_hook(tmp_path):
-    """Test PR-EXEC-5: Ledger hook writes to outcome ledger."""
+def test_pr_exec_5_quote_ok_event(tmp_path):
+    """Test PR-EXEC-5: QUOTE_OK event written via append_trade_event."""
+    ledger = tmp_path / "runs" / "trade_outcomes.jsonl"
+    ledger.parent.mkdir(parents=True)
+
+    import os
+    original_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        append_trade_event(
+            event="QUOTE_OK",
+            intent_id="abc123",
+            candidate_id="cand_1",
+            run_id="run_001",
+            regime="crash",
+            timestamp_utc="2026-03-25T10:00:00+00:00",
+            also_global=True,
+        )
+        events = read_trade_events(Path("runs") / "trade_outcomes.jsonl")
+        assert len(events) == 1
+        assert events[0]["event"] == "QUOTE_OK"
+        assert events[0]["intent_id"] == "abc123"
+        assert events[0]["candidate_id"] == "cand_1"
+        assert events[0]["run_id"] == "run_001"
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_pr_exec_5_quote_blocked_event(tmp_path):
+    """Test PR-EXEC-5: QUOTE_BLOCKED event written via append_trade_event."""
+    import os
+    original_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        append_trade_event(
+            event="QUOTE_BLOCKED",
+            intent_id="def456",
+            candidate_id="cand_2",
+            run_id="run_002",
+            regime="selloff",
+            timestamp_utc="2026-03-25T10:01:00+00:00",
+            also_global=True,
+        )
+        events = read_trade_events(Path("runs") / "trade_outcomes.jsonl")
+        assert len(events) == 1
+        assert events[0]["event"] == "QUOTE_BLOCKED"
+        assert events[0]["regime"] == "selloff"
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_pr_exec_5_ledger_hook_legacy(tmp_path):
+    """Test PR-EXEC-5 (legacy): Ledger hook writes to outcome ledger."""
     intent = {
         "candidate_id": "test_candidate",
         "run_id": "test_run",
@@ -259,17 +312,21 @@ def test_pr_exec_5_ledger_hook(tmp_path):
     os.chdir(tmp_path)
     
     try:
-        # Should not raise
-        write_ledger_hook(
-            intent=intent,
-            execution_verdict="OK_TO_STAGE",
-            limit_price=0.45
+        # Use append_trade_event (write_ledger_hook was removed; replaced by append_trade_event)
+        append_trade_event(
+            event="QUOTE_OK",
+            intent_id="test_intent_id",
+            candidate_id=intent["candidate_id"],
+            run_id=intent["run_id"],
+            regime=intent["regime"],
+            timestamp_utc="2026-03-25T10:00:00+00:00",
+            also_global=True,
         )
-        
-        # Check that artifacts/trade_outcomes.jsonl was created
-        ledger_file = tmp_path / "artifacts" / "trade_outcomes.jsonl"
+
+        # Check that runs/trade_outcomes.jsonl was created
+        ledger_file = tmp_path / "runs" / "trade_outcomes.jsonl"
         assert ledger_file.exists(), "Ledger file should be created"
-        
+
     finally:
         os.chdir(original_cwd)
 
