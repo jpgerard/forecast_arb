@@ -238,6 +238,69 @@ def _normalize_proposals(
 
 
 # ---------------------------------------------------------------------------
+# Managed proposals writer (Patch 6)
+# ---------------------------------------------------------------------------
+
+
+def _write_managed_proposals(
+    report: dict,
+    source_period: dict,
+    source_report_path: str,
+    proposals_out: Path,
+    since: str,
+    until: str,
+) -> None:
+    """
+    Normalize reflection report into managed proposals store and write to disk.
+
+    Also writes a period-scoped archive snapshot alongside the managed file:
+        <proposals_out.parent>/archive/<since>_<until>_weekly_reflection_proposals.json
+
+    Guard: if the existing managed file already contains reviewed (non-PENDING)
+    proposals, logs a warning and skips the write to avoid overwriting human
+    decisions.  Use a new --proposals-out path or a new period to bypass.
+    """
+    from forecast_arb.ops.proposals import normalize_proposals, load_proposals, save_proposals
+
+    new_proposals = normalize_proposals(
+        reflection_report=report,
+        source_period=source_period,
+        source_report_path=source_report_path,
+    )
+
+    container = load_proposals(proposals_out)
+    already_reviewed = [
+        p for p in container.get("proposals", [])
+        if p.get("status") != "PENDING"
+    ]
+    if already_reviewed:
+        logger.warning(
+            "proposals-out %s already contains %d reviewed proposal(s); "
+            "skipping write to avoid overwriting human decisions. "
+            "Use a different --proposals-out path or clear reviewed entries first.",
+            proposals_out, len(already_reviewed),
+        )
+        return
+
+    container["proposals"] = new_proposals
+    save_proposals(proposals_out, container)
+    n = len(new_proposals)
+    logger.info("Wrote managed proposals (n=%d) → %s", n, proposals_out)
+
+    # Period-scoped archive snapshot
+    archive_dir = proposals_out.parent / "archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    archive_path = archive_dir / f"{since}_{until}_weekly_reflection_proposals.json"
+    save_proposals(archive_path, {
+        "schema_version": container["schema_version"],
+        "ts_created": container["ts_created"],
+        "ts_updated": container["ts_updated"],
+        "proposals": new_proposals,
+    })
+    logger.info("Wrote archive snapshot → %s", archive_path)
+
+
+# ---------------------------------------------------------------------------
 # Core callable
 # ---------------------------------------------------------------------------
 
@@ -250,6 +313,7 @@ def run_agent_weekly_reflection(
     trade_outcomes_path: Optional[Path] = None,
     out_dir: Optional[Path] = None,
     reflect: bool = False,
+    proposals_out: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """
     Run the weekly reflection pipeline.
@@ -339,6 +403,17 @@ def run_agent_weekly_reflection(
             json.dump(proposals, fh, indent=2, default=str)
         logger.info(f"Wrote weekly_parameter_proposals.json → {proposals_path}")
 
+        # Optional: write managed proposals store + period-scoped archive
+        if proposals_out is not None:
+            _write_managed_proposals(
+                report=report,
+                source_period=packet.get("period", {}),
+                source_report_path=str(report_path.resolve()),
+                proposals_out=Path(proposals_out),
+                since=since,
+                until=until,
+            )
+
     # ------------------------------------------------------------------
     # Compact stdout summary
     # ------------------------------------------------------------------
@@ -397,6 +472,18 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Output directory. Defaults to <runs-root>/weekly/<since>_<until>/.")
     p.add_argument("--reflect", action="store_true", default=False,
                    help="Call OpenAI for reflection analysis. Requires OPENAI_API_KEY.")
+    p.add_argument(
+        "--proposals-out", type=Path, default=None,
+        metavar="PATH",
+        help=(
+            "If set (with --reflect), normalize all proposals (parameter + strategy) "
+            "from the reflection report into a managed proposals store at this path. "
+            "A period-scoped archive snapshot is also written to "
+            "<proposals-out-dir>/archive/<since>_<until>_weekly_reflection_proposals.json. "
+            "Will not overwrite if the file already contains reviewed proposals. "
+            "Suggested path: runs/proposals/weekly_reflection_proposals.json"
+        ),
+    )
     p.add_argument("--log-level", default="INFO",
                    choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     return p
@@ -416,6 +503,7 @@ def main() -> None:
         trade_outcomes_path=args.trade_outcomes,
         out_dir=args.out_dir,
         reflect=args.reflect,
+        proposals_out=args.proposals_out,
     )
 
 

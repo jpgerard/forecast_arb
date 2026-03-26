@@ -75,6 +75,7 @@ _VALID_EVIDENCE = {"STRONG", "MODERATE", "WEAK", "INSUFFICIENT"}
 _VALID_CALIBRATION = {"WELL_CALIBRATED", "OVERFIT", "UNDERFIT", "UNCLEAR"}
 _VALID_REGIMES = {"TRENDING_UP", "TRENDING_DOWN", "RANGING", "VOLATILE", "UNCLEAR"}
 _VALID_OVERFIT_RISK = {"HIGH", "MEDIUM", "LOW"}
+_VALID_EFFECTIVENESS = {"EFFECTIVE", "MARGINAL", "INEFFECTIVE", "UNCLEAR"}
 
 _SYSTEM_PROMPT = """\
 You are a systematic quantitative trading analyst reviewing a weekly run-level summary \
@@ -126,8 +127,37 @@ REQUIRED JSON SCHEMA:
     "overfit_risk":<"HIGH"|"MEDIUM"|"LOW">,"confidence":<float>,"promotion_path":<str>
   }],
   "open_questions": [<str>],
-  "weak_evidence_flags": [<str>]
+  "weak_evidence_flags": [<str>],
+  "strategy_effectiveness_assessment": {
+    "verdict": <"EFFECTIVE"|"MARGINAL"|"INEFFECTIVE"|"UNCLEAR">,
+    "rationale": <str>,
+    "confidence": <float>,
+    "caveats": [<str>]
+  },
+  "optimization_opportunities": [{
+    "opportunity": <str>,
+    "description": <str>,
+    "expected_improvement": <str>,
+    "overfit_risk": <"HIGH"|"MEDIUM"|"LOW">,
+    "confidence": <float>
+  }],
+  "strategy_hypotheses": [{
+    "hypothesis": <str>,
+    "rationale": <str>,
+    "confidence": <float>,
+    "expected_outcome": <str>,
+    "overfit_risk": <"HIGH"|"MEDIUM"|"LOW">
+  }]
 }
+
+STRATEGY ASSESSMENT RULES:
+- strategy_effectiveness_assessment.verdict: judge based on actual trade outcomes
+  and EV trends. Use UNCLEAR if evidence is sparse or n_runs_assessed < 3.
+- optimization_opportunities: broad structural suggestions (run frequency, regime
+  mix, sleeve design). These cannot be tested via parameter replay — use HIGH
+  overfit_risk unless evidence is strong.
+- strategy_hypotheses: testable ideas requiring paper trading or research.
+  Each must name a concrete expected_outcome that could falsify the hypothesis.
 """
 
 
@@ -160,6 +190,14 @@ def _empty_result(ts_utc: str, period: dict) -> Dict[str, Any]:
         "parameter_suggestions": [],
         "open_questions": [],
         "weak_evidence_flags": [],
+        "strategy_effectiveness_assessment": {
+            "verdict": "UNCLEAR",
+            "rationale": "",
+            "confidence": 0.0,
+            "caveats": [],
+        },
+        "optimization_opportunities": [],
+        "strategy_hypotheses": [],
         "raw_response": "",
         "error": None,
         "ts_utc": ts_utc,
@@ -272,6 +310,59 @@ def _extract_suggestions(raw: dict) -> List[dict]:
     return result
 
 
+def _extract_strategy_effectiveness(raw: dict) -> dict:
+    sea = raw.get("strategy_effectiveness_assessment") or {}
+    caveats = sea.get("caveats") or []
+    return {
+        "verdict": _coerce_str(sea.get("verdict"), _VALID_EFFECTIVENESS, "UNCLEAR"),
+        "rationale": str(sea.get("rationale") or ""),
+        "confidence": _safe_float(sea.get("confidence")) or 0.0,
+        "caveats": [str(x) for x in caveats] if isinstance(caveats, list) else [],
+    }
+
+
+def _extract_optimization_opportunities(raw: dict) -> List[dict]:
+    items = raw.get("optimization_opportunities") or []
+    if not isinstance(items, list):
+        return []
+    result = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        opportunity = str(item.get("opportunity") or "").strip()
+        if not opportunity:
+            continue
+        result.append({
+            "opportunity": opportunity,
+            "description": str(item.get("description") or ""),
+            "expected_improvement": str(item.get("expected_improvement") or ""),
+            "overfit_risk": _coerce_str(item.get("overfit_risk"), _VALID_OVERFIT_RISK, "HIGH"),
+            "confidence": _safe_float(item.get("confidence")),
+        })
+    return result
+
+
+def _extract_strategy_hypotheses(raw: dict) -> List[dict]:
+    items = raw.get("strategy_hypotheses") or []
+    if not isinstance(items, list):
+        return []
+    result = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        hypothesis = str(item.get("hypothesis") or "").strip()
+        if not hypothesis:
+            continue
+        result.append({
+            "hypothesis": hypothesis,
+            "rationale": str(item.get("rationale") or ""),
+            "confidence": _safe_float(item.get("confidence")),
+            "expected_outcome": str(item.get("expected_outcome") or ""),
+            "overfit_risk": _coerce_str(item.get("overfit_risk"), _VALID_OVERFIT_RISK, "HIGH"),
+        })
+    return result
+
+
 def run_weekly_reflection(reflection_packet: dict) -> dict:
     """
     Call OpenAI to generate a structured weekly performance reflection.
@@ -375,6 +466,9 @@ def run_weekly_reflection(reflection_packet: dict) -> dict:
     calibration = _extract_calibration(parsed)
     regime = _extract_regime(parsed)
     suggestions = _extract_suggestions(parsed)
+    strategy_effectiveness = _extract_strategy_effectiveness(parsed)
+    optimization_opps = _extract_optimization_opportunities(parsed)
+    strategy_hypotheses = _extract_strategy_hypotheses(parsed)
 
     # Enforce: if active_parameters is empty → no suggestions
     if not reflection_packet.get("active_parameters"):
@@ -401,6 +495,9 @@ def run_weekly_reflection(reflection_packet: dict) -> dict:
         "parameter_suggestions": suggestions,
         "open_questions": open_questions,
         "weak_evidence_flags": weak_flags,
+        "strategy_effectiveness_assessment": strategy_effectiveness,
+        "optimization_opportunities": optimization_opps,
+        "strategy_hypotheses": strategy_hypotheses,
         "raw_response": raw_response,
         "error": None,
         "ts_utc": ts_utc,
