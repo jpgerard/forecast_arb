@@ -75,12 +75,12 @@ def run_agent_daily(
     # run_daily_core kwargs
     regime: str = "auto",
     underlier: str = "SPY",
-    dte_min: int = 7,
-    dte_max: int = 45,
-    p_event_source: str = "kalshi",
-    fallback_p: float = 0.05,
-    campaign_config: str = "configs/campaign_v1.yaml",
-    min_debit_per_contract: float = 0.50,
+    dte_min: int = 30,
+    dte_max: int = 60,
+    p_event_source: str = "kalshi-auto",
+    fallback_p: float = 0.30,
+    campaign_config: str = "configs/structuring_crash_venture_v2.yaml",
+    min_debit_per_contract: float = 10.0,
     snapshot_path: Optional[str] = None,
     ibkr_host: str = "127.0.0.1",
     ibkr_port: int = 7496,
@@ -99,7 +99,7 @@ def run_agent_daily(
         regime:               Regime selector passed to run_daily_core().
         underlier:            Underlier symbol.
         dte_min/dte_max:      DTE range for expiry selection.
-        p_event_source:       Probability source ("kalshi" or "fallback").
+        p_event_source:       Probability source ("kalshi-auto" or "fallback").
         fallback_p:           Fallback p_event probability.
         campaign_config:      Path to campaign YAML config.
         min_debit_per_contract: Minimum debit filter.
@@ -265,18 +265,18 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Regime selector.")
     p.add_argument("--underlier", default="SPY",
                    help="Underlier symbol.")
-    p.add_argument("--dte-min", type=int, default=7,
+    p.add_argument("--dte-min", type=int, default=30,
                    help="Minimum DTE for expiry selection.")
-    p.add_argument("--dte-max", type=int, default=45,
+    p.add_argument("--dte-max", type=int, default=60,
                    help="Maximum DTE for expiry selection.")
-    p.add_argument("--p-event-source", default="kalshi",
-                   choices=["kalshi", "fallback"],
+    p.add_argument("--p-event-source", default="kalshi-auto",
+                   choices=["kalshi-auto", "fallback"],
                    help="Probability source.")
-    p.add_argument("--fallback-p", type=float, default=0.05,
+    p.add_argument("--fallback-p", type=float, default=0.30,
                    help="Fallback p_event probability.")
-    p.add_argument("--campaign-config", default="configs/campaign_v1.yaml",
+    p.add_argument("--campaign-config", default="configs/structuring_crash_venture_v2.yaml",
                    help="Path to campaign YAML config.")
-    p.add_argument("--min-debit", type=float, default=0.50,
+    p.add_argument("--min-debit", type=float, default=10.0,
                    help="Minimum debit per contract filter.")
     p.add_argument("--snapshot", type=str, default=None,
                    help="Optional path to existing IBKR snapshot JSON.")

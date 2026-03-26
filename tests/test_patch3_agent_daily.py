@@ -10,6 +10,7 @@ Covers:
 - run_agent_daily: returns a valid schema_version "2.0" packet
 - run_agent_daily: writes operator_summary.json and operator_summary.md
 - run_agent_daily: writes agent_last_run.json with correct fields
+- _build_parser: CLI defaults match run_daily_v2 defaults
 """
 
 import json
@@ -158,7 +159,7 @@ _SCRIPTS_DIR = str(Path(__file__).parent.parent / "scripts")
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
-from agent_daily import run_agent_daily
+from agent_daily import run_agent_daily, _build_parser
 
 
 def _make_mock_run_result(run_dir: Path, run_id: str = "run_test_001") -> dict:
@@ -261,3 +262,23 @@ def test_run_agent_daily_preflight_status_propagated(tmp_path):
         record = json.load(fh)
 
     assert record["preflight_status"] == "SKIPPED"
+
+
+# ---------------------------------------------------------------------------
+# Parser defaults regression test
+# ---------------------------------------------------------------------------
+
+
+def test_agent_daily_parser_defaults_match_run_daily_v2_defaults():
+    """CLI defaults must stay in sync with run_daily_v2.py defaults."""
+    args = _build_parser().parse_args([])  # no arguments → all defaults
+
+    assert args.regime == "auto"
+    assert args.underlier == "SPY"
+    assert args.dte_min == 30
+    assert args.dte_max == 60
+    assert args.p_event_source == "kalshi-auto"
+    assert args.fallback_p == 0.30
+    assert args.campaign_config == "configs/structuring_crash_venture_v2.yaml"
+    assert args.min_debit == 10.0
+    assert args.ibkr_port == 7496

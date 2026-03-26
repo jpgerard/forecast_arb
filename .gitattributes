@@ -1,0 +1,19 @@
+# Normalize text files in the repo to avoid noisy CRLF/LF diffs.
+* text=auto
+
+# Source / config / docs
+*.py   text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.json text eol=lf
+*.jsonl text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.toml text eol=lf
+*.ini  text eol=lf
+*.sh   text eol=lf
+
+# Windows-native scripts
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
