@@ -255,6 +255,8 @@ def fetch_p_external(
     p_event_external = {
         "p": p_external_value,
         "source": source_actual or "unknown",
+        # Legacy boolean — kept for backward compat with downstream readers.
+        # Use authoritative_capable (Patch C) for semantic gating decisions.
         "authoritative": (p_external_value is not None and source_actual == "kalshi"),
         "asof_ts_utc": datetime.now(timezone.utc).isoformat(),
         "market": {
@@ -275,7 +277,28 @@ def fetch_p_external(
             "warnings": []
         }
     }
-    
+
+    # Patch C: transfer Patch B evidence fields from PEventResult into the block.
+    # p_event_result is None only when a branch above fails to assign it (should
+    # not happen in practice; guarded defensively).
+    if p_event_result is not None:
+        from forecast_arb.oracle.evidence import is_authoritative_capable, EVIDENCE_ROLE
+        _raw_ec = getattr(p_event_result, "evidence_class", None)
+        _ec_str = _raw_ec.value if _raw_ec is not None else None
+        _auth_cap = is_authoritative_capable(_raw_ec)
+        _role = EVIDENCE_ROLE.get(_raw_ec) if _raw_ec is not None else None
+        p_event_external["evidence_class"] = _ec_str
+        p_event_external["semantic_notes"] = list(
+            getattr(p_event_result, "semantic_notes", None) or []
+        )
+        p_event_external["authoritative_capable"] = _auth_cap
+        p_event_external["p_external_role"] = _role
+    else:
+        p_event_external["evidence_class"] = None
+        p_event_external["semantic_notes"] = []
+        p_event_external["authoritative_capable"] = False
+        p_event_external["p_external_role"] = None
+
     return p_event_external
 
 
@@ -907,6 +930,19 @@ def run_daily_core(
     run_id = f"crash_venture_v2_{config_checksum}_{timestamp}"
     run_dir = runs_root / "crash_venture_v2" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    # Patch C: write p_event_external.json so run_summary / decision_packet
+    # can read evidence_class and related provenance fields.
+    _ext_artifacts_dir = run_dir / "artifacts"
+    _ext_artifacts_dir.mkdir(parents=True, exist_ok=True)
+    _ext_artifact_path = _ext_artifacts_dir / "p_event_external.json"
+    try:
+        import json as _json
+        with open(_ext_artifact_path, "w", encoding="utf-8") as _fh:
+            _json.dump(p_event_external_block, _fh, indent=2)
+        logger.info(f"✓ p_event_external.json written: {_ext_artifact_path}")
+    except Exception as _exc:
+        logger.warning(f"Failed to write p_event_external.json: {_exc}")
 
     results_by_regime = {}
     for r in regimes_to_run:

@@ -4,10 +4,14 @@ forecast_arb.oracle.evidence
 Evidence-class taxonomy for Kalshi-derived external probability signals.
 
 Patch B: classification only.  Gating authority unchanged.
+Patch C: adds EVIDENCE_ROLE policy table and is_authoritative_capable() helper.
+         The table encodes the *current* intended role of each class.
+         It does NOT change gating behaviour — that is deferred to a later patch.
 """
 from __future__ import annotations
 
 from enum import Enum
+from typing import Dict, Optional
 
 
 class EvidenceClass(str, Enum):
@@ -69,3 +73,47 @@ YEARLY_SERIES: frozenset = frozenset({"KXINXY"})
 #: A KXINXY market beyond this threshold is too far to provide meaningful
 #: directional context and should be classified UNUSABLE.
 COARSE_REGIME_MAX_ERROR_PCT: float = 15.0
+
+
+# ---------------------------------------------------------------------------
+# Patch C: policy role table
+# ---------------------------------------------------------------------------
+
+#: Maps each EvidenceClass to its current operational role string.
+#:
+#: Role semantics:
+#:   AUTHORITATIVE_CAPABLE — may be used as the authoritative p_external in a
+#:     future gating patch.  Currently classified only; no gating change yet.
+#:   INFORMATIVE_ONLY — present in diagnostics/summary; does not gate.
+#:   CONTEXT_ONLY — coarse directional context; never used as a probability.
+#:   DIAGNOSTIC_ONLY — no usable signal; contributes to absence-of-evidence logs.
+#:
+#: This table is the single source of truth for `is_authoritative_capable()`.
+EVIDENCE_ROLE: Dict[str, str] = {
+    EvidenceClass.EXACT_TERMINAL:  "AUTHORITATIVE_CAPABLE",
+    EvidenceClass.NEARBY_TERMINAL: "INFORMATIVE_ONLY",
+    EvidenceClass.PATHWISE_PROXY:  "INFORMATIVE_ONLY",
+    EvidenceClass.COARSE_REGIME:   "CONTEXT_ONLY",
+    EvidenceClass.UNUSABLE:        "DIAGNOSTIC_ONLY",
+}
+
+
+def is_authoritative_capable(ec: Optional[EvidenceClass]) -> bool:
+    """Return True iff *ec* is AUTHORITATIVE_CAPABLE under the current policy.
+
+    Only ``EXACT_TERMINAL`` qualifies today.  Returns ``False`` for ``None``
+    (pre-Patch-B objects or unclassified results).
+
+    This function does **not** change gating behaviour.  It is a classification
+    helper used to populate ``authoritative_capable`` in artifacts so that
+    downstream analytics and future gating patches can act on the information.
+
+    Args:
+        ec: An ``EvidenceClass`` member or ``None``.
+
+    Returns:
+        ``True`` only when ``EVIDENCE_ROLE[ec] == "AUTHORITATIVE_CAPABLE"``.
+    """
+    if ec is None:
+        return False
+    return EVIDENCE_ROLE.get(ec) == "AUTHORITATIVE_CAPABLE"

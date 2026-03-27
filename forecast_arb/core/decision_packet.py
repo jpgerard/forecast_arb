@@ -162,6 +162,31 @@ def _read_gate_decision(run_dir: Path) -> Optional[str]:
         return None
 
 
+def _read_gate_decision_full(run_dir: Path) -> Optional[Dict[str, Any]]:
+    """Read the full gate_decision dict. Returns None on any failure."""
+    gate_path = run_dir / "artifacts" / "gate_decision.json"
+    if not gate_path.exists():
+        return None
+    try:
+        with open(gate_path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return None
+
+
+def _p_external_used_for_gating(gate_dict: Optional[Dict[str, Any]]) -> bool:
+    """True if p_external was a non-None input when the gate was evaluated.
+
+    Patch C definition: "available / consulted by gate" — not "determinative".
+    A True value means Kalshi data existed and was fed to the gate logic.
+    It does NOT imply the gate passed or that external evidence drove the outcome.
+    A False value means p_external was None at gate time (fallback / no match).
+    """
+    if gate_dict is None:
+        return False
+    return gate_dict.get("p_external") is not None
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -209,14 +234,21 @@ def build_decision_packet(
             "submit_requested": False,
             "submit_executed": False,
             "p_evidence_class": None,  # Patch B
+            # Patch C
+            "p_external_authoritative_capable": False,
+            "p_external_semantic_notes": [],
+            "p_external_role": None,
+            "p_baseline_source": "options_implied",
         }
 
     # ------------------------------------------------------------------
     # Gate decision
     # ------------------------------------------------------------------
     gate_decision: Optional[str] = None
+    gate_decision_full: Optional[Dict[str, Any]] = None
     if run_dir is not None:
         gate_decision = _read_gate_decision(run_dir)
+        gate_decision_full = _read_gate_decision_full(run_dir)
 
     # ------------------------------------------------------------------
     # Top candidates
@@ -263,6 +295,13 @@ def build_decision_packet(
             "submit_requested": run_summary.get("submit_requested", False),
             "submit_executed": run_summary.get("submit_executed", False),
             "p_evidence_class": run_summary.get("p_evidence_class"),  # Patch B
+            # Patch C
+            "p_external_authoritative_capable": run_summary.get(
+                "p_external_authoritative_capable", False
+            ),
+            "p_external_semantic_notes": run_summary.get("p_external_semantic_notes", []),
+            "p_external_role": run_summary.get("p_external_role"),
+            "p_baseline_source": run_summary.get("p_baseline_source", "options_implied"),
         },
         "broker_preflight": preflight,
         "top_candidates": top_candidates,
@@ -273,6 +312,16 @@ def build_decision_packet(
             "confidence": run_summary.get("confidence"),
             "gate_decision": gate_decision,
             "p_evidence_class": run_summary.get("p_evidence_class"),  # Patch B
+            # Patch C
+            "p_external_authoritative_capable": run_summary.get(
+                "p_external_authoritative_capable", False
+            ),
+            # p_external_used_for_gating: True when p_external was a non-None input
+            # to the gate (available/consulted — not "determinative").
+            "p_external_used_for_gating": _p_external_used_for_gating(gate_decision_full),
+            "p_external_role": run_summary.get("p_external_role"),
+            "p_baseline_source": run_summary.get("p_baseline_source", "options_implied"),
+            "p_external_semantic_notes": run_summary.get("p_external_semantic_notes", []),
         },
         "notes": notes,
     }

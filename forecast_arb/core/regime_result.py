@@ -80,7 +80,11 @@ class RegimeResult:
                     "regime": self.regime,
                     "asof_ts_utc": self.p_event_external.get("asof_ts_utc"),
                     "source": self.p_event_external.get("source"),
-                    "authoritative": self.p_event_external.get("authoritative")
+                    "authoritative": self.p_event_external.get("authoritative"),
+                    # Patch C — semantic evidence fields
+                    "evidence_class": self.p_event_external.get("evidence_class"),
+                    "authoritative_capable": self.p_event_external.get("authoritative_capable", False),
+                    "p_external_role": self.p_event_external.get("p_external_role"),
                 }
                 candidate["p_event_external_p"] = self.p_event_external.get("p")
         

@@ -354,6 +354,80 @@ def _compute_signal_stats(regime_entries: List[dict]) -> dict:
     return stats
 
 
+def _compute_evidence_class_stats(run_dirs: List[str], runs_root: Path) -> dict:
+    """Patch C: count EvidenceClass occurrences across per-run artifacts.
+
+    Reads ``artifacts/p_event_external.json`` from each run directory and
+    buckets the ``evidence_class`` field into counters.  Runs without the
+    file (pre-Patch-C or missing artifact) increment ``unclassified``.
+
+    Args:
+        run_dirs: List of run-directory *names* (not full paths) as returned
+                  by ``build_reflection_packet``.
+        runs_root: Root path used to reconstruct absolute run-dir paths.
+
+    Returns:
+        Dict with per-class counts, authoritative_capable_count,
+        authoritative_capable_rate, and n_total.  Never raises.
+    """
+    from collections import Counter as _Counter
+
+    _KNOWN = [
+        "EXACT_TERMINAL",
+        "NEARBY_TERMINAL",
+        "PATHWISE_PROXY",
+        "COARSE_REGIME",
+        "UNUSABLE",
+    ]
+
+    counts: _Counter = _Counter({k: 0 for k in _KNOWN})
+    unclassified = 0
+    authoritative_capable_count = 0
+
+    for run_name in run_dirs:
+        # run dirs may be bare names OR full paths; handle both
+        rd = Path(run_name)
+        if not rd.is_absolute():
+            # Search one level under runs_root (the structure is runs_root/<strategy>/<run_id>)
+            # Use glob to find the run dir regardless of the strategy subdirectory.
+            matches = list(runs_root.glob(f"**/{run_name}"))
+            rd = matches[0] if matches else runs_root / run_name
+
+        artifact = rd / "artifacts" / "p_event_external.json"
+        try:
+            if not artifact.exists():
+                unclassified += 1
+                continue
+            with open(artifact, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                # Legacy plain-float artifact
+                unclassified += 1
+                continue
+            ec = data.get("evidence_class")
+            if ec in _KNOWN:
+                counts[ec] += 1
+                if data.get("authoritative_capable", False):
+                    authoritative_capable_count += 1
+            else:
+                unclassified += 1
+        except Exception:
+            unclassified += 1
+
+    n_total = sum(counts.values()) + unclassified
+    rate = (
+        round(authoritative_capable_count / n_total, 4) if n_total > 0 else 0.0
+    )
+
+    return {
+        **{k: counts[k] for k in _KNOWN},
+        "unclassified": unclassified,
+        "authoritative_capable_count": authoritative_capable_count,
+        "authoritative_capable_rate": rate,
+        "n_total": n_total,
+    }
+
+
 def _load_configs(paths: Optional[List[Path]]) -> Tuple[dict, List[str]]:
     """Load and merge YAML config files. Returns (merged_dict, loaded_path_strs)."""
     if not paths:
@@ -513,6 +587,9 @@ def build_reflection_packet(
             gate_decisions_counter[str(gd_val)] += 1
 
     signal_stats = _compute_signal_stats(regime_entries)
+    signal_stats["evidence_class_stats"] = _compute_evidence_class_stats(
+        run_dirs_included, runs_root
+    )
 
     # ------------------------------------------------------------------
     # Trade outcomes — trade events + quote activity

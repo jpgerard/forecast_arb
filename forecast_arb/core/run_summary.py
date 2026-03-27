@@ -43,6 +43,11 @@ def extract_summary(run_dir: Path) -> Dict:
         "submit_executed": False,
         # Patch B — None when absent from artifact (backward-compatible)
         "p_evidence_class": None,
+        # Patch C — None / False / [] when absent (backward-compatible)
+        "p_external_authoritative_capable": False,
+        "p_external_semantic_notes": [],
+        "p_external_role": None,
+        "p_baseline_source": "options_implied",
     }
     
     # Try to load manifest for basic info
@@ -112,9 +117,19 @@ def extract_summary(run_dir: Path) -> Dict:
                 summary["p_external"] = p_ext.get("value", p_ext.get("p_event"))
                 # Patch B: read evidence_class if present (None when artifact predates Patch B)
                 summary["p_evidence_class"] = p_ext.get("evidence_class")
+                # Patch C: read full provenance fields (safe defaults for old artifacts)
+                summary["p_external_authoritative_capable"] = p_ext.get(
+                    "authoritative_capable", False
+                )
+                # Keep the full semantic_notes list for downstream analytics;
+                # the operator summary may render only the first note.
+                summary["p_external_semantic_notes"] = list(
+                    p_ext.get("semantic_notes") or []
+                )
+                summary["p_external_role"] = p_ext.get("p_external_role")
             else:
                 summary["p_external"] = p_ext
-                # plain float artifact — no evidence_class available
+                # plain float artifact — no evidence provenance available
                 
         except (json.JSONDecodeError, IOError):
             pass
@@ -188,4 +203,8 @@ def extract_summary_safe(run_dir: Path) -> Dict:
             "submit_requested": False,
             "submit_executed": False,
             "p_evidence_class": None,
+            "p_external_authoritative_capable": False,
+            "p_external_semantic_notes": [],
+            "p_external_role": None,
+            "p_baseline_source": "options_implied",
         }

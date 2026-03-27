@@ -143,13 +143,40 @@ def render_operator_summary(
 
     lines.append("| Signal | Value |")
     lines.append("|--------|-------|")
-    lines.append(f"| p_external | {_fmt(signals.get('p_external'))} |")
-    lines.append(f"| p_implied  | {_fmt(signals.get('p_implied'))} |")
-    lines.append(f"| edge       | {_fmt(signals.get('edge'))} |")
-    lines.append(f"| confidence | {_fmt(signals.get('confidence'))} |")
-    lines.append(f"| gate           | {signals.get('gate_decision') or 'N/A'} |")
-    lines.append(f"| evidence_class | {signals.get('p_evidence_class') or 'N/A'} |")
+    lines.append(f"| p_external          | {_fmt(signals.get('p_external'))} |")
+    lines.append(f"| p_implied           | {_fmt(signals.get('p_implied'))} |")
+    lines.append(f"| edge                | {_fmt(signals.get('edge'))} |")
+    lines.append(f"| confidence          | {_fmt(signals.get('confidence'))} |")
+    lines.append(f"| gate                | {signals.get('gate_decision') or 'N/A'} |")
+    lines.append(f"| evidence_class      | {signals.get('p_evidence_class') or 'N/A'} |")
+    # Patch C
+    lines.append(
+        f"| evidence_role       | {signals.get('p_external_role') or 'N/A'} |"
+    )
+    lines.append(
+        f"| auth_capable        | {signals.get('p_external_authoritative_capable', False)} |"
+    )
+    lines.append(
+        f"| ext_used_for_gating | {signals.get('p_external_used_for_gating', False)} |"
+    )
+    lines.append(
+        f"| baseline_source     | {signals.get('p_baseline_source') or 'N/A'} |"
+    )
     lines.append("")
+
+    # Patch C: surface the first semantic note as a visible warning when the
+    # external evidence is not authoritative-capable (i.e. Kalshi contributed
+    # context/diagnostics only).  Operators can see the full note list in the
+    # artifact JSON.
+    if not signals.get("p_external_authoritative_capable", False):
+        _ec = signals.get("p_evidence_class") or "UNKNOWN"
+        _role = signals.get("p_external_role") or "N/A"
+        _snotes: list = signals.get("p_external_semantic_notes") or []
+        _note_text = _snotes[0] if _snotes else f"evidence_class={_ec}"
+        lines.append(
+            f"> ⚠️  External evidence is non-authoritative ({_role}): {_note_text}"
+        )
+        lines.append("")
 
     # ------------------------------------------------------------------
     # Top Candidates
