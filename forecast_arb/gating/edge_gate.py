@@ -25,12 +25,30 @@ class GateDecision:
         confidence_external: Confidence from external source
         confidence_implied: Confidence from implied probability calculation
         metadata: Combined metadata from both sources
-        # Patch C — evidence provenance fields
+
+        Patch C — evidence provenance fields (never affect gate pass/fail):
         evidence_class: String value of EvidenceClass for the p_external input,
             or None when p_external was a pre-Patch-B object or not a PEventResult.
         p_external_authoritative_capable: True iff evidence_class is
             AUTHORITATIVE_CAPABLE under the current EVIDENCE_ROLE policy.
             False for None/unclassified. Does NOT change gating behaviour.
+
+        Patch D — policy role fields (never affect gate pass/fail):
+        p_external_role: Role string from EVIDENCE_ROLE for the p_external input
+            (e.g. "AUTHORITATIVE_CAPABLE", "INFORMATIVE_ONLY").  None when
+            evidence_class is None or unrecognised.  Pre-computed so artifact
+            consumers do not need to re-derive from EVIDENCE_ROLE.
+        p_external_gate_semantics: Fixed string ``"consulted_not_determinative"``.
+            Always present.  Documents that p_external was available/consulted
+            by gate() but does NOT imply it was authoritative or that it changed
+            the pass/fail outcome.  No EvidenceClass currently alters gate logic.
+            EXACT_TERMINAL is eligible for a future gating patch only.
+
+    Note on ``p_external_used_for_gating`` (in decision_packet.signals):
+        That field is NOT part of GateDecision.  It is a *derived* flag set by
+        decision_packet.build_decision_packet() to indicate that p_external was
+        non-None when gate() was called (i.e., "available/consulted").  It does
+        NOT mean the external evidence was authoritative or changed the outcome.
     """
     decision: str
     reason: str
@@ -44,12 +62,17 @@ class GateDecision:
     # Patch C — always present in to_dict() output even when None/False
     evidence_class: Optional[str] = None
     p_external_authoritative_capable: bool = False
+    # Patch D — always present in to_dict() output even when None
+    p_external_role: Optional[str] = None
+    p_external_gate_semantics: str = "consulted_not_determinative"
 
     def to_dict(self) -> Dict:
         """Convert to dictionary for serialization.
 
-        New fields (Patch C) are always emitted so the artifact shape is
-        stable regardless of whether evidence classification was available.
+        All provenance fields (Patch C + Patch D) are always emitted so the
+        artifact shape is stable regardless of whether evidence classification
+        was available.  Consumers reading older artifacts that lack Patch D
+        fields should use ``.get()`` with a ``None`` default.
         """
         return {
             "decision": self.decision,
@@ -64,6 +87,9 @@ class GateDecision:
             # Patch C
             "evidence_class": self.evidence_class,
             "p_external_authoritative_capable": self.p_external_authoritative_capable,
+            # Patch D
+            "p_external_role": self.p_external_role,
+            "p_external_gate_semantics": self.p_external_gate_semantics,
         }
 
 
@@ -98,11 +124,13 @@ def gate(
     Returns:
         GateDecision with decision, reason, and full provenance
     """
-    # Patch C: extract evidence provenance from p_external (safe for pre-Patch-B objects)
-    from ..oracle.evidence import is_authoritative_capable  # local import avoids circularity
+    # Patch C/D: extract evidence provenance from p_external (safe for pre-Patch-B objects)
+    from ..oracle.evidence import is_authoritative_capable, get_policy_role  # local import avoids circularity
     _raw_ec = getattr(p_external, "evidence_class", None)
     _ec_str: Optional[str] = _raw_ec.value if _raw_ec is not None else None
     _auth_capable: bool = is_authoritative_capable(_raw_ec)
+    # Patch D: pre-compute role string; None when ec is None (pre-Patch-B or unclassified)
+    _role: Optional[str] = get_policy_role(_raw_ec) if _raw_ec is not None else None
 
     # Combine metadata from both sources
     combined_metadata = {
@@ -139,6 +167,7 @@ def gate(
             },
             evidence_class=_ec_str,
             p_external_authoritative_capable=_auth_capable,
+            p_external_role=_role,
         )
 
     # Rule 2: Check if p_external is available
@@ -155,6 +184,7 @@ def gate(
             metadata=combined_metadata,
             evidence_class=_ec_str,
             p_external_authoritative_capable=_auth_capable,
+            p_external_role=_role,
         )
 
     # Rule 3: Compute edge
@@ -174,6 +204,7 @@ def gate(
             metadata=combined_metadata,
             evidence_class=_ec_str,
             p_external_authoritative_capable=_auth_capable,
+            p_external_role=_role,
         )
 
     # Rule 5: Check edge threshold
@@ -190,6 +221,7 @@ def gate(
             metadata=combined_metadata,
             evidence_class=_ec_str,
             p_external_authoritative_capable=_auth_capable,
+            p_external_role=_role,
         )
 
     # Rule 6: Pass all gates
@@ -205,4 +237,5 @@ def gate(
         metadata=combined_metadata,
         evidence_class=_ec_str,
         p_external_authoritative_capable=_auth_capable,
+        p_external_role=_role,
     )

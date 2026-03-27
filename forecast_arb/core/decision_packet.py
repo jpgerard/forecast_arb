@@ -318,10 +318,17 @@ def build_decision_packet(
             ),
             # p_external_used_for_gating: True when p_external was a non-None input
             # to the gate (available/consulted — not "determinative").
+            # See GateDecision.p_external_gate_semantics for the machine-readable tag.
             "p_external_used_for_gating": _p_external_used_for_gating(gate_decision_full),
             "p_external_role": run_summary.get("p_external_role"),
             "p_baseline_source": run_summary.get("p_baseline_source", "options_implied"),
             "p_external_semantic_notes": run_summary.get("p_external_semantic_notes", []),
+            # Patch D: gate semantics tag from gate_decision.json; None for pre-Patch-D artifacts
+            "p_external_gate_semantics": (
+                gate_decision_full.get("p_external_gate_semantics")
+                if gate_decision_full is not None
+                else None
+            ),
         },
         "notes": notes,
     }

@@ -7,6 +7,9 @@ Patch B: classification only.  Gating authority unchanged.
 Patch C: adds EVIDENCE_ROLE policy table and is_authoritative_capable() helper.
          The table encodes the *current* intended role of each class.
          It does NOT change gating behaviour — that is deferred to a later patch.
+Patch D: adds EVIDENCE_POLICY_DESC (machine-readable gating implication per class)
+         and get_policy_role() (None-safe role accessor).
+         No gating change.  Purely classificatory / display.
 """
 from __future__ import annotations
 
@@ -96,6 +99,57 @@ EVIDENCE_ROLE: Dict[str, str] = {
     EvidenceClass.COARSE_REGIME:   "CONTEXT_ONLY",
     EvidenceClass.UNUSABLE:        "DIAGNOSTIC_ONLY",
 }
+
+
+# ---------------------------------------------------------------------------
+# Patch D: policy description table + safe role accessor
+# ---------------------------------------------------------------------------
+
+#: Human-readable, present-tense gating implication for each EvidenceClass.
+#:
+#: Used by operator summary renderers so they do not hardcode policy strings.
+#: The description for EXACT_TERMINAL explicitly states the current status to
+#: prevent operators from inferring that "authoritative-capable" means the
+#: class currently drives the gate.
+#:
+#: Key invariant: non-authoritative descriptions must NOT contain the word
+#: "authoritative".  Tests enforce this.
+EVIDENCE_POLICY_DESC: Dict[str, str] = {
+    EvidenceClass.EXACT_TERMINAL:  (
+        "eligible for future authority, not currently determinative"
+    ),
+    EvidenceClass.NEARBY_TERMINAL: (
+        "informative only — contributes diagnostics, does not affect gate"
+    ),
+    EvidenceClass.PATHWISE_PROXY:  (
+        "informative only — contributes diagnostics, does not affect gate"
+    ),
+    EvidenceClass.COARSE_REGIME:   (
+        "context only — directional signal, does not affect gate"
+    ),
+    EvidenceClass.UNUSABLE:        (
+        "diagnostic only — absence-of-evidence marker"
+    ),
+}
+
+
+def get_policy_role(ec: Optional[EvidenceClass]) -> str:
+    """Return the policy role string for *ec*, or ``"UNKNOWN"`` for None/unrecognised.
+
+    This is the None-safe accessor for ``EVIDENCE_ROLE``.  It replaces direct
+    ``EVIDENCE_ROLE.get(ec)`` call sites to avoid ``KeyError`` on future enum
+    values or on pre-Patch-B ``None`` inputs.
+
+    Args:
+        ec: An ``EvidenceClass`` member, its string value, or ``None``.
+
+    Returns:
+        Role string from ``EVIDENCE_ROLE`` (e.g. ``"AUTHORITATIVE_CAPABLE"``)
+        or ``"UNKNOWN"`` when *ec* is ``None`` or not present in the table.
+    """
+    if ec is None:
+        return "UNKNOWN"
+    return EVIDENCE_ROLE.get(ec, "UNKNOWN")
 
 
 def is_authoritative_capable(ec: Optional[EvidenceClass]) -> bool:

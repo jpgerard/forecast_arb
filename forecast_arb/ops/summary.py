@@ -18,6 +18,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Patch D: policy description strings for each evidence class.
+# Imported lazily inside the renderer to avoid import-time circularity risks.
 SUPPORTED_SCHEMA_VERSION = "2.0"
 
 
@@ -141,6 +143,28 @@ def render_operator_summary(
             return f"{val:.4f}"
         return str(val)
 
+    # Patch D: load policy description table for annotated role rendering.
+    try:
+        from forecast_arb.oracle.evidence import EVIDENCE_POLICY_DESC as _EPD
+    except Exception:
+        _EPD = {}
+
+    def _role_annotated(role: Optional[str], ec: Optional[str]) -> str:
+        """Return role string with its policy description appended."""
+        if role is None:
+            return "N/A"
+        # Look up by enum value (string) — EVIDENCE_POLICY_DESC is keyed on
+        # EvidenceClass members which compare equal to their string values.
+        desc = _EPD.get(ec, "") if ec else ""
+        if desc:
+            return f"{role} — {desc}"
+        return role
+
+    _ec_val = signals.get("p_evidence_class")
+    _role_val = signals.get("p_external_role")
+    _used_for_gating = signals.get("p_external_used_for_gating", False)
+    _gate_semantics = signals.get("p_external_gate_semantics") or "consulted_not_determinative"
+
     lines.append("| Signal | Value |")
     lines.append("|--------|-------|")
     lines.append(f"| p_external          | {_fmt(signals.get('p_external'))} |")
@@ -148,33 +172,36 @@ def render_operator_summary(
     lines.append(f"| edge                | {_fmt(signals.get('edge'))} |")
     lines.append(f"| confidence          | {_fmt(signals.get('confidence'))} |")
     lines.append(f"| gate                | {signals.get('gate_decision') or 'N/A'} |")
-    lines.append(f"| evidence_class      | {signals.get('p_evidence_class') or 'N/A'} |")
-    # Patch C
+    lines.append(f"| evidence_class      | {_ec_val or 'N/A'} |")
+    # Patch C/D: evidence_role row now annotated with policy description
     lines.append(
-        f"| evidence_role       | {signals.get('p_external_role') or 'N/A'} |"
+        f"| evidence_role       | {_role_annotated(_role_val, _ec_val)} |"
     )
     lines.append(
         f"| auth_capable        | {signals.get('p_external_authoritative_capable', False)} |"
     )
+    # Patch D: ext_used_for_gating qualified as "consulted — not determinative"
     lines.append(
-        f"| ext_used_for_gating | {signals.get('p_external_used_for_gating', False)} |"
+        f"| ext_used_for_gating | {_used_for_gating} ({_gate_semantics}) |"
     )
     lines.append(
         f"| baseline_source     | {signals.get('p_baseline_source') or 'N/A'} |"
     )
     lines.append("")
 
-    # Patch C: surface the first semantic note as a visible warning when the
-    # external evidence is not authoritative-capable (i.e. Kalshi contributed
-    # context/diagnostics only).  Operators can see the full note list in the
-    # artifact JSON.
+    # Patch C/D: non-authoritative warning block.
+    # Patch D adds an explicit sentence clarifying that no class currently gates.
     if not signals.get("p_external_authoritative_capable", False):
-        _ec = signals.get("p_evidence_class") or "UNKNOWN"
-        _role = signals.get("p_external_role") or "N/A"
+        _ec = _ec_val or "UNKNOWN"
+        _role = _role_val or "N/A"
         _snotes: list = signals.get("p_external_semantic_notes") or []
         _note_text = _snotes[0] if _snotes else f"evidence_class={_ec}"
         lines.append(
             f"> ⚠️  External evidence is non-authoritative ({_role}): {_note_text}"
+        )
+        lines.append(
+            "> No EvidenceClass currently affects gate pass/fail. "
+            "EXACT_TERMINAL is eligible for future authority only."
         )
         lines.append("")
 

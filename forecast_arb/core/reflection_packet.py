@@ -355,11 +355,21 @@ def _compute_signal_stats(regime_entries: List[dict]) -> dict:
 
 
 def _compute_evidence_class_stats(run_dirs: List[str], runs_root: Path) -> dict:
-    """Patch C: count EvidenceClass occurrences across per-run artifacts.
+    """Patch C/D: count EvidenceClass occurrences across per-run artifacts.
 
     Reads ``artifacts/p_event_external.json`` from each run directory and
     buckets the ``evidence_class`` field into counters.  Runs without the
     file (pre-Patch-C or missing artifact) increment ``unclassified``.
+
+    Patch D additions:
+    - ``by_role``: counts grouped by EVIDENCE_ROLE value.  All four known role
+      strings plus ``"UNKNOWN"`` are always present (even at zero) so callers
+      do not need to guard against missing keys.
+    - ``informative_or_above_rate``: (EXACT + NEARBY + PROXY) / n_classified.
+      Answers "how often did we have at least informative evidence."
+    - ``terminal_or_above_rate``: (EXACT + NEARBY) / n_classified.
+      Answers "how often did we have a terminal-quality signal."
+    Rates are over *classified* runs only (unclassified excluded from denominator).
 
     Args:
         run_dirs: List of run-directory *names* (not full paths) as returned
@@ -367,10 +377,11 @@ def _compute_evidence_class_stats(run_dirs: List[str], runs_root: Path) -> dict:
         runs_root: Root path used to reconstruct absolute run-dir paths.
 
     Returns:
-        Dict with per-class counts, authoritative_capable_count,
-        authoritative_capable_rate, and n_total.  Never raises.
+        Dict with per-class counts, by_role breakdown, rate metrics,
+        authoritative_capable_count, and n_total.  Never raises.
     """
     from collections import Counter as _Counter
+    from forecast_arb.oracle.evidence import EVIDENCE_ROLE, get_policy_role  # type: ignore
 
     _KNOWN = [
         "EXACT_TERMINAL",
@@ -380,7 +391,17 @@ def _compute_evidence_class_stats(run_dirs: List[str], runs_root: Path) -> dict:
         "UNUSABLE",
     ]
 
+    # All known role strings (guaranteed present in output even at zero)
+    _KNOWN_ROLES = [
+        "AUTHORITATIVE_CAPABLE",
+        "INFORMATIVE_ONLY",
+        "CONTEXT_ONLY",
+        "DIAGNOSTIC_ONLY",
+        "UNKNOWN",
+    ]
+
     counts: _Counter = _Counter({k: 0 for k in _KNOWN})
+    by_role: _Counter = _Counter({r: 0 for r in _KNOWN_ROLES})
     unclassified = 0
     authoritative_capable_count = 0
 
@@ -397,33 +418,58 @@ def _compute_evidence_class_stats(run_dirs: List[str], runs_root: Path) -> dict:
         try:
             if not artifact.exists():
                 unclassified += 1
+                by_role["UNKNOWN"] += 1
                 continue
             with open(artifact, encoding="utf-8") as fh:
                 data = json.load(fh)
             if not isinstance(data, dict):
                 # Legacy plain-float artifact
                 unclassified += 1
+                by_role["UNKNOWN"] += 1
                 continue
             ec = data.get("evidence_class")
             if ec in _KNOWN:
                 counts[ec] += 1
+                # Patch D: use get_policy_role for role lookup (None-safe)
+                role = get_policy_role(ec)  # ec is a str value here
+                by_role[role] += 1
                 if data.get("authoritative_capable", False):
                     authoritative_capable_count += 1
             else:
                 unclassified += 1
+                by_role["UNKNOWN"] += 1
         except Exception:
             unclassified += 1
+            by_role["UNKNOWN"] += 1
 
     n_total = sum(counts.values()) + unclassified
-    rate = (
+    n_classified = sum(counts.values())
+
+    authoritative_capable_rate = (
         round(authoritative_capable_count / n_total, 4) if n_total > 0 else 0.0
     )
+
+    # Patch D: rates over classified runs only
+    informative_or_above_rate = round(
+        (counts["EXACT_TERMINAL"] + counts["NEARBY_TERMINAL"] + counts["PATHWISE_PROXY"])
+        / n_classified,
+        4,
+    ) if n_classified > 0 else 0.0
+
+    terminal_or_above_rate = round(
+        (counts["EXACT_TERMINAL"] + counts["NEARBY_TERMINAL"]) / n_classified,
+        4,
+    ) if n_classified > 0 else 0.0
 
     return {
         **{k: counts[k] for k in _KNOWN},
         "unclassified": unclassified,
         "authoritative_capable_count": authoritative_capable_count,
-        "authoritative_capable_rate": rate,
+        "authoritative_capable_rate": authoritative_capable_rate,
+        # Patch D
+        "by_role": dict(by_role),
+        "informative_or_above_rate": informative_or_above_rate,
+        "terminal_or_above_rate": terminal_or_above_rate,
         "n_total": n_total,
     }
 
