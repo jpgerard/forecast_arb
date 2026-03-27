@@ -147,7 +147,8 @@ def render_operator_summary(
     lines.append(f"| p_implied  | {_fmt(signals.get('p_implied'))} |")
     lines.append(f"| edge       | {_fmt(signals.get('edge'))} |")
     lines.append(f"| confidence | {_fmt(signals.get('confidence'))} |")
-    lines.append(f"| gate       | {signals.get('gate_decision') or 'N/A'} |")
+    lines.append(f"| gate           | {signals.get('gate_decision') or 'N/A'} |")
+    lines.append(f"| evidence_class | {signals.get('p_evidence_class') or 'N/A'} |")
     lines.append("")
 
     # ------------------------------------------------------------------

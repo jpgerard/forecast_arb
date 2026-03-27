@@ -208,6 +208,7 @@ def build_decision_packet(
             "num_tickets": 0,
             "submit_requested": False,
             "submit_executed": False,
+            "p_evidence_class": None,  # Patch B
         }
 
     # ------------------------------------------------------------------
@@ -261,6 +262,7 @@ def build_decision_packet(
             "num_tickets": run_summary.get("num_tickets", 0),
             "submit_requested": run_summary.get("submit_requested", False),
             "submit_executed": run_summary.get("submit_executed", False),
+            "p_evidence_class": run_summary.get("p_evidence_class"),  # Patch B
         },
         "broker_preflight": preflight,
         "top_candidates": top_candidates,
@@ -270,6 +272,7 @@ def build_decision_packet(
             "edge": run_summary.get("edge"),
             "confidence": run_summary.get("confidence"),
             "gate_decision": gate_decision,
+            "p_evidence_class": run_summary.get("p_evidence_class"),  # Patch B
         },
         "notes": notes,
     }

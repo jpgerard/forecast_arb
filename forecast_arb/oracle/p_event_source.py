@@ -13,6 +13,14 @@ from datetime import datetime, timezone
 from typing import Dict, Optional, Any
 from enum import Enum
 
+from .evidence import (
+    EvidenceClass,
+    EXACT_MATCH_THRESHOLD_PCT,
+    EXACT_TERMINAL_SERIES,
+    YEARLY_SERIES,
+    COARSE_REGIME_MAX_ERROR_PCT,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +43,7 @@ class PEventSourceType(Enum):
 class PEventResult:
     """
     Result from a p_event source with full provenance metadata.
-    
+
     Attributes:
         p_event: Event probability [0, 1]
         source: Source type that provided this probability
@@ -44,6 +52,8 @@ class PEventResult:
         metadata: Source-specific metadata (market IDs, strikes, etc.)
         fallback_used: Whether a fallback was used
         warnings: Any warnings encountered during fetch
+        evidence_class: Patch B — semantic evidence class (None = pre-Patch-B)
+        semantic_notes: Patch B — human-readable notes on evidence classification
     """
     p_event: float
     source: str
@@ -52,11 +62,16 @@ class PEventResult:
     metadata: Dict[str, Any]
     fallback_used: bool = False
     warnings: list = None
-    
+    # Patch B
+    evidence_class: Optional[EvidenceClass] = None
+    semantic_notes: list = None
+
     def __post_init__(self):
         if self.warnings is None:
             self.warnings = []
-    
+        if self.semantic_notes is None:
+            self.semantic_notes = []
+
     def to_dict(self) -> Dict:
         """Convert to dictionary for serialization."""
         return {
@@ -66,7 +81,12 @@ class PEventResult:
             "timestamp": self.timestamp,
             "metadata": self.metadata,
             "fallback_used": self.fallback_used,
-            "warnings": self.warnings
+            "warnings": self.warnings,
+            # Patch B
+            "evidence_class": (
+                self.evidence_class.value if self.evidence_class is not None else None
+            ),
+            "semantic_notes": list(self.semantic_notes) if self.semantic_notes else [],
         }
 
 
@@ -153,17 +173,46 @@ class KalshiPEventSource(PEventSource):
                 # If exact match found
                 if search_result["exact_match"] and search_result["p_external"] is not None:
                     from ..kalshi.client import BASE_URL
-                    
+
+                    # Patch B: classify evidence strength
+                    source_series = search_result.get("source_series") or ""
+                    closest = (
+                        (search_result.get("diagnostics") or {}).get("closest_match") or {}
+                    )
+                    mapping_error_pct = closest.get("mapping_error_pct", 0.0)
+
+                    if (
+                        source_series in EXACT_TERMINAL_SERIES
+                        and mapping_error_pct <= EXACT_MATCH_THRESHOLD_PCT
+                    ):
+                        ec = EvidenceClass.EXACT_TERMINAL
+                        snotes = [
+                            f"Exact terminal match in {source_series} "
+                            f"({mapping_error_pct:.3f}% error) on "
+                            f"{search_result.get('market_ticker', '?')}"
+                        ]
+                    else:
+                        ec = EvidenceClass.NEARBY_TERMINAL
+                        if source_series in YEARLY_SERIES:
+                            reason = f"series={source_series} (yearly — semantically approximate)"
+                        else:
+                            reason = f"mapping_error={mapping_error_pct:.3f}% > threshold"
+                        snotes = [
+                            f"Nearby terminal match ({reason}) on "
+                            f"{search_result.get('market_ticker', '?')}"
+                        ]
+
                     # PHASE 6.5: Include diagnostics in metadata
                     metadata = {
                         "base_url": BASE_URL,
                         "market_ticker": search_result["market_ticker"],
                         "source_series": search_result["source_series"],
-                        "event_def": event_definition
+                        "event_def": event_definition,
+                        "evidence_class": ec.value,
                     }
                     if "diagnostics" in search_result:
                         metadata["diagnostics"] = search_result["diagnostics"]
-                    
+
                     return PEventResult(
                         p_event=search_result["p_external"],
                         source="kalshi",
@@ -171,14 +220,16 @@ class KalshiPEventSource(PEventSource):
                         timestamp=timestamp,
                         metadata=metadata,
                         fallback_used=False,
-                        warnings=search_result.get("warnings", [])
+                        warnings=search_result.get("warnings", []),
+                        evidence_class=ec,
+                        semantic_notes=snotes,
                     )
                 
                 # If proxy found and proxy allowed
                 if search_result["proxy"] is not None:
                     from ..kalshi.client import BASE_URL
                     proxy = search_result["proxy"]
-                    
+
                     return PEventResult(
                         p_event=None,  # Keep p_event as None - do not override
                         source="kalshi",
@@ -195,21 +246,48 @@ class KalshiPEventSource(PEventSource):
                             "proxy_horizon_days": proxy.proxy_horizon_days,
                             "proxy_market_ticker": proxy.proxy_market_ticker,
                             "proxy_source_url": proxy.proxy_source_url,
-                            "proxy_confidence": proxy.confidence
+                            "proxy_confidence": proxy.confidence,
+                            "evidence_class": EvidenceClass.PATHWISE_PROXY.value,
                         },
                         fallback_used=False,
-                        warnings=search_result.get("warnings", [])
+                        warnings=search_result.get("warnings", []),
+                        evidence_class=EvidenceClass.PATHWISE_PROXY,
+                        semantic_notes=[
+                            f"Pathwise proxy (KXINXMINY hazard-scaled) from "
+                            f"{proxy.proxy_market_ticker}"
+                        ],
                     )
                 
                 # No match found - return structured failure
+                # Patch B: check for coarse KXINXY context
+                closest_info = (
+                    (search_result.get("diagnostics") or {}).get("closest_match")
+                )
+                if (
+                    closest_info is not None
+                    and (closest_info.get("series") or "") in YEARLY_SERIES
+                    and closest_info.get("mapping_error_pct", 100.0) <= COARSE_REGIME_MAX_ERROR_PCT
+                ):
+                    no_match_ec = EvidenceClass.COARSE_REGIME
+                    no_match_snotes = [
+                        f"Coarse regime context: KXINXY market "
+                        f"{closest_info.get('ticker', '?')} found "
+                        f"({closest_info.get('mapping_error_pct', '?'):.1f}% error) "
+                        f"but outside terminal tolerance — annual/directional context only"
+                    ]
+                else:
+                    no_match_ec = EvidenceClass.UNUSABLE
+                    no_match_snotes = ["No usable Kalshi market found"]
+
                 # PHASE 6.5: Include diagnostics in metadata
                 metadata = {
                     "event_def": event_definition,
-                    "spot_spx": spot_spx
+                    "spot_spx": spot_spx,
+                    "evidence_class": no_match_ec.value,
                 }
                 if "diagnostics" in search_result:
                     metadata["diagnostics"] = search_result["diagnostics"]
-                
+
                 return PEventResult(
                     p_event=None,
                     source="kalshi",
@@ -217,7 +295,9 @@ class KalshiPEventSource(PEventSource):
                     timestamp=timestamp,
                     metadata=metadata,
                     fallback_used=False,
-                    warnings=search_result.get("warnings", ["NO_MARKET_MATCH"])
+                    warnings=search_result.get("warnings", ["NO_MARKET_MATCH"]),
+                    evidence_class=no_match_ec,
+                    semantic_notes=no_match_snotes,
                 )
                 
             except Exception as e:
@@ -282,9 +362,17 @@ class KalshiPEventSource(PEventSource):
                 
                 # Build result with full provenance
                 from ..kalshi.client import BASE_URL
-                
+
                 target_level = spot_spx * (1 + event_definition["threshold_pct"])
-                
+
+                # Patch B: KXINX legacy path — classify by mapping_error
+                mapping_error_pct = abs(top_candidate.mapping_error or 0.0) * 100.0
+                legacy_ec = (
+                    EvidenceClass.EXACT_TERMINAL
+                    if mapping_error_pct <= EXACT_MATCH_THRESHOLD_PCT
+                    else EvidenceClass.NEARBY_TERMINAL
+                )
+
                 return PEventResult(
                     p_event=oracle_data["p_event"],
                     source="kalshi",
@@ -300,10 +388,16 @@ class KalshiPEventSource(PEventSource):
                         "rationale": top_candidate.rationale,
                         "bid": oracle_data["bid"],
                         "ask": oracle_data["ask"],
-                        "num_candidates": len(candidates)
+                        "num_candidates": len(candidates),
+                        "evidence_class": legacy_ec.value,
                     },
                     fallback_used=False,
-                    warnings=[]
+                    warnings=[],
+                    evidence_class=legacy_ec,
+                    semantic_notes=[
+                        f"Legacy path (KXINX direct): {top_candidate.ticker} "
+                        f"mapping_error={mapping_error_pct:.3f}%"
+                    ],
                 )
                 
             except ValueError as e:
@@ -332,7 +426,7 @@ class KalshiPEventSource(PEventSource):
         
         # Build result with full provenance (exact format per specification)
         from ..kalshi.client import BASE_URL
-        
+
         return PEventResult(
             p_event=oracle_data["p_event"],
             source="kalshi",
@@ -342,10 +436,13 @@ class KalshiPEventSource(PEventSource):
                 "base_url": BASE_URL,
                 "market_ticker": oracle_data["market_id"],
                 "bid": oracle_data["bid"],
-                "ask": oracle_data["ask"]
+                "ask": oracle_data["ask"],
+                "evidence_class": EvidenceClass.NEARBY_TERMINAL.value,
             },
             fallback_used=False,
-            warnings=[]
+            warnings=[],
+            evidence_class=EvidenceClass.NEARBY_TERMINAL,
+            semantic_notes=["Legacy search path — KXINX series, error not computed"],
         )
     
     def _find_matching_market(self, event_definition: Dict) -> Optional[Dict]:

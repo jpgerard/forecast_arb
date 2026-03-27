@@ -40,7 +40,9 @@ def extract_summary(run_dir: Path) -> Dict:
         "confidence": None,
         "num_tickets": 0,
         "submit_requested": False,
-        "submit_executed": False
+        "submit_executed": False,
+        # Patch B — None when absent from artifact (backward-compatible)
+        "p_evidence_class": None,
     }
     
     # Try to load manifest for basic info
@@ -108,8 +110,11 @@ def extract_summary(run_dir: Path) -> Dict:
             # Could be a simple value or a dict with 'value' key
             if isinstance(p_ext, dict):
                 summary["p_external"] = p_ext.get("value", p_ext.get("p_event"))
+                # Patch B: read evidence_class if present (None when artifact predates Patch B)
+                summary["p_evidence_class"] = p_ext.get("evidence_class")
             else:
                 summary["p_external"] = p_ext
+                # plain float artifact — no evidence_class available
                 
         except (json.JSONDecodeError, IOError):
             pass
@@ -181,5 +186,6 @@ def extract_summary_safe(run_dir: Path) -> Dict:
             "confidence": None,
             "num_tickets": 0,
             "submit_requested": False,
-            "submit_executed": False
+            "submit_executed": False,
+            "p_evidence_class": None,
         }
