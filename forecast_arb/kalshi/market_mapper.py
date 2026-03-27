@@ -12,6 +12,29 @@ from datetime import date, datetime
 from typing import Dict, List, Optional, Any
 
 from forecast_arb.kalshi.series_coverage import get_coverage_manager
+from forecast_arb.kalshi.threshold_parser import (
+    parse_threshold_from_market,
+    infer_series_from_ticker,
+)
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic codes — emitted in the structured mapping summary block.
+# Callers may inspect logs for these strings to distinguish failure modes.
+# ---------------------------------------------------------------------------
+
+#: The ``kalshi_markets`` input list was empty.
+DIAG_NO_MARKETS_RETURNED = "NO_MARKETS_RETURNED"
+#: Markets were provided but none matched the SPX/S&P 500 filter.
+DIAG_NO_REPRESENTABLE_MARKETS = "NO_REPRESENTABLE_MARKETS"
+#: SPX markets found but none matched the target expiry date.
+DIAG_DATE_MISMATCH = "DATE_MISMATCH"
+#: Date-matched markets found but level/range could not be parsed from any.
+DIAG_PARSE_FAILURE = "PARSE_FAILURE"
+#: Parsed markets found but all fell outside ``max_mapping_error``.
+DIAG_THRESHOLD_MISMATCH = "THRESHOLD_MISMATCH"
+#: Candidates found; best candidate has mapping_error > 0 (inexact match).
+DIAG_EXACT_MATCH_UNAVAILABLE = "EXACT_MATCH_UNAVAILABLE"
 
 
 logger = logging.getLogger(__name__)
@@ -77,57 +100,82 @@ def validate_event_def(event_def: Dict[str, Any]) -> None:
 def parse_market_level(ticker: str, title: str) -> Optional[Dict[str, Any]]:
     """
     Parse market level or range from ticker and title.
-    
-    Supports two archetypes:
-    A) Level-based: "S&P 500 closes below 4200 on 2026-02-27"
-    B) Range-based: "SPX between 4000 and 4200 on Feb 27"
-    
+
+    TRANSITIONAL SHIM — delegates to
+    ``threshold_parser.parse_threshold_from_market()``.
+
+    TODO (Patch B): Remove this function and migrate call sites to use
+    ``parse_threshold_from_market()`` directly, which returns the richer
+    typed result dict.
+
+    Behavioural changes vs the old implementation
+    ----------------------------------------------
+    * **B-tickers without a range title now return None.**  The old
+      implementation extracted ``level=<B_value>`` from the ticker digit
+      sequence.  This was incorrect — B-tickers mark range boundaries, not
+      point levels — and has been removed.  Callers relying on that path
+      should pass a title with explicit "between X and Y" text.
+    * Decimal thresholds (e.g. ``T7199.9999``) are now supported.
+    * KXINXMINY / KXINXMAXY final-segment decimals
+      (e.g. ``KXINXMINY-01JAN2027-6600.01``) are now supported.
+    * Comma-separated numbers in titles are now handled.
+
     Args:
-        ticker: Market ticker (e.g., "INX-26FEB27-B4200")
-        title: Market title
-        
+        ticker: Market ticker (e.g., "KXINX-26FEB27H1600-T7199.9999")
+        title:  Market title
+
     Returns:
-        Dict with market_type, level/range info, or None if unparseable
+        Dict with ``market_type`` key ("level" or "range") and associated
+        fields, or ``None`` if the market cannot be parsed.
     """
-    # Try level-based pattern (look for single number in title)
-    level_pattern = r'\b(?:below|above|≤|≥|<|>)\s*(\d{3,5})\b'
-    level_match = re.search(level_pattern, title, re.IGNORECASE)
-    
-    if level_match:
-        level = float(level_match.group(1))
+    market = {"ticker": ticker, "title": title}
+    parsed = parse_threshold_from_market(market)
+
+    kind = parsed.get("kind")
+
+    if kind == "point":
+        threshold = parsed.get("threshold")
+        if threshold is None:
+            return None
+        direction = "above" if "above" in title.lower() else "below"
         return {
             "market_type": "level",
-            "level": level,
-            "direction": "below" if any(x in title.lower() for x in ["below", "≤", "<"]) else "above"
+            "level": threshold,
+            "direction": direction,
         }
-    
-    # Try range-based pattern
-    range_pattern = r'\b(?:between|from)\s*(\d{3,5})\s*(?:and|to)\s*(\d{3,5})\b'
-    range_match = re.search(range_pattern, title, re.IGNORECASE)
-    
-    if range_match:
-        low = float(range_match.group(1))
-        high = float(range_match.group(2))
+
+    if kind == "range":
+        low = parsed.get("low")
+        high = parsed.get("high")
+        if low is None or high is None:
+            return None
         return {
             "market_type": "range",
             "low": low,
             "high": high,
-            "mid": (low + high) / 2
+            "mid": (low + high) / 2,
         }
-    
-    # Try parsing ticker for level (e.g., INX-26FEB27-B4200)
-    ticker_level_pattern = r'[B|A](\d{4,5})'
-    ticker_match = re.search(ticker_level_pattern, ticker)
-    
-    if ticker_match:
-        level = float(ticker_match.group(1))
-        direction = "below" if "B" in ticker else "above"
-        return {
-            "market_type": "level",
-            "level": level,
-            "direction": direction
-        }
-    
+
+    # threshold_parser returned unknown; try title-based range as an
+    # additional fallback for non-KXINX series with "between X and Y" titles.
+    range_pattern = (
+        r'\b(?:between|from)\s+([\d,]+(?:\.\d+)?)\s+(?:and|to)\s+([\d,]+(?:\.\d+)?)\b'
+    )
+    m = re.search(range_pattern, title, re.IGNORECASE)
+    if m:
+        try:
+            low = float(m.group(1).replace(",", ""))
+            high = float(m.group(2).replace(",", ""))
+            if low < high and low > 0:
+                return {
+                    "market_type": "range",
+                    "low": low,
+                    "high": high,
+                    "mid": (low + high) / 2,
+                }
+        except ValueError:
+            pass
+
     return None
 
 
@@ -250,26 +298,31 @@ def map_event_to_markets(
     if enable_coverage_precheck:
         coverage_precheck_results = _run_coverage_precheck(expiry)
     
-    # Iterate all markets and find candidates
+    # Iterate all markets and find candidates; track waterfall counters for diagnostics
     candidates = []
-    
+    n_input = len(kalshi_markets)
+    n_spx = 0
+    n_date_matched = 0
+    n_level_parsed = 0
+
     for market in kalshi_markets:
         ticker = market.get("ticker", "")
         title = market.get("title", "")
         close_time_str = market.get("close_time", "")
-        
+
         # Skip if not binary market
         market_type = market.get("market_type", "")
         if market_type and market_type != "binary":
             continue
-        
+
         # Skip if not SPX market
         if not is_spx_market(ticker, title):
             continue
-        
+        n_spx += 1
+
         # Coverage precheck: skip if market's series doesn't cover target expiry
         if enable_coverage_precheck and coverage_precheck_results:
-            series = _infer_series_from_ticker(ticker)
+            series = infer_series_from_ticker(ticker)
             if series and series in coverage_precheck_results:
                 precheck = coverage_precheck_results[series]
                 if not precheck.get("covers", False):
@@ -278,21 +331,23 @@ def map_event_to_markets(
                         f"(reason: {precheck.get('reason')})"
                     )
                     continue
-        
+
         # Parse close date
         market_date = parse_market_date(close_time_str)
         if market_date is None:
             continue
-        
+
         # Check expiry match (must be exact)
         if market_date != expiry:
             continue
-        
+        n_date_matched += 1
+
         # Parse market level/range
         level_info = parse_market_level(ticker, title)
         if level_info is None:
             continue
-        
+        n_level_parsed += 1
+
         # Calculate mapping error based on market type
         if level_info["market_type"] == "level":
             market_level = level_info["level"]
@@ -302,7 +357,7 @@ def map_event_to_markets(
                 f"vs target {target_level:.0f} "
                 f"({mapping_error:.2%} error)"
             )
-        
+
         elif level_info["market_type"] == "range":
             market_mid = level_info["mid"]
             mapping_error = abs(market_mid - target_level) / target_level
@@ -311,23 +366,23 @@ def map_event_to_markets(
                 f"mid={market_mid:.0f} vs target {target_level:.0f} "
                 f"({mapping_error:.2%} error)"
             )
-        
+
         else:
             continue
-        
+
         # Filter by max mapping error
         if mapping_error > max_mapping_error:
             continue
-        
+
         # Calculate liquidity score
         liquidity_score = calculate_liquidity_score(market)
-        
+
         # Parse close_time to datetime
         try:
             close_time = datetime.fromisoformat(close_time_str.replace("Z", "+00:00"))
         except (ValueError, AttributeError):
             close_time = datetime.now()
-        
+
         # Create mapped market
         mapped = MappedKalshiMarket(
             ticker=ticker,
@@ -336,63 +391,55 @@ def map_event_to_markets(
             implied_level=level_info.get("level") or level_info.get("mid"),
             mapping_error=mapping_error,
             liquidity_score=liquidity_score,
-            rationale=rationale
+            rationale=rationale,
         )
-        
+
         candidates.append(mapped)
-    
+
     # Sort by mapping error (ascending), then liquidity (descending)
     candidates.sort(key=lambda m: (m.mapping_error, -m.liquidity_score))
-    
-    # Log coverage precheck summary
-    if enable_coverage_precheck and coverage_precheck_results:
-        rejected_series = [
-            s for s, r in coverage_precheck_results.items() 
-            if not r.get("covers", False)
-        ]
-        if rejected_series:
-            logger.info(
-                f"Coverage precheck rejected series: {rejected_series} "
-                f"(expiry {expiry} out of range)"
-            )
-    
-    logger.info(f"Found {len(candidates)} candidate markets")
-    
-    # If no candidates and coverage precheck rejected all series, log diagnostic
-    if len(candidates) == 0 and enable_coverage_precheck and coverage_precheck_results:
-        all_rejected = all(
-            not r.get("covers", False) 
-            for r in coverage_precheck_results.values()
-        )
-        if all_rejected:
-            logger.warning(
-                f"NO_SERIES_COVERS_TARGET_EXPIRY: target={expiry}, "
-                f"precheck_results={coverage_precheck_results}"
-            )
-    
-    return candidates
 
-
-def _infer_series_from_ticker(ticker: str) -> Optional[str]:
-    """
-    Infer series from ticker prefix.
-    
-    Args:
-        ticker: Market ticker
-    
-    Returns:
-        Series ticker or None
-    """
-    if ticker.startswith("KXINXMINY"):
-        return "KXINXMINY"
-    elif ticker.startswith("KXINXMAXY"):
-        return "KXINXMAXY"
-    elif ticker.startswith("KXINXY"):
-        return "KXINXY"
-    elif ticker.startswith("KXINX"):
-        return "KXINX"
+    # ------------------------------------------------------------------
+    # Structured diagnostic summary block — one entry per mapping pass.
+    # Distinguishes failure modes at each filtering stage.
+    # ------------------------------------------------------------------
+    n_candidates = len(candidates)
+    if n_input == 0:
+        diag_code = DIAG_NO_MARKETS_RETURNED
+    elif n_spx == 0:
+        diag_code = DIAG_NO_REPRESENTABLE_MARKETS
+    elif n_date_matched == 0:
+        diag_code = DIAG_DATE_MISMATCH
+    elif n_level_parsed == 0:
+        diag_code = DIAG_PARSE_FAILURE
+    elif n_candidates == 0:
+        diag_code = DIAG_THRESHOLD_MISMATCH
+    elif candidates[0].mapping_error > 0:
+        diag_code = DIAG_EXACT_MATCH_UNAVAILABLE
     else:
-        return None
+        diag_code = None  # exact match found
+
+    rejected_series = (
+        [s for s, r in coverage_precheck_results.items() if not r.get("covers", False)]
+        if enable_coverage_precheck and coverage_precheck_results
+        else []
+    )
+
+    diag_summary = {
+        "event": "MAP_EVENT_TO_MARKETS",
+        "target_level": round(target_level, 2),
+        "expiry": str(expiry),
+        "n_input_markets": n_input,
+        "n_spx_markets": n_spx,
+        "n_date_matched": n_date_matched,
+        "n_level_parsed": n_level_parsed,
+        "n_candidates": n_candidates,
+        "diag_code": diag_code,
+        "coverage_precheck_rejected": rejected_series,
+    }
+    logger.info("[market_mapper] mapping pass summary: %s", diag_summary)
+
+    return candidates
 
 
 def _run_coverage_precheck(target_expiry: date) -> Dict[str, Dict[str, Any]]:
@@ -405,8 +452,8 @@ def _run_coverage_precheck(target_expiry: date) -> Dict[str, Dict[str, Any]]:
     Returns:
         Dict mapping series -> coverage check result
     """
-    # Known SPX series
-    known_series = ["KXINX", "KXINXY", "KXINXMINY"]
+    # Known SPX series (KXINXMAXY added — yearly max — alongside yearly min)
+    known_series = ["KXINX", "KXINXY", "KXINXMINY", "KXINXMAXY"]
     
     coverage_manager = get_coverage_manager()
     

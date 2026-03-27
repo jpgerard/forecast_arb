@@ -178,13 +178,16 @@ def probe_all_series(status: str = "open", limit: int = 5) -> None:
         status: Market status filter
         limit: Number of markets to display per series
     """
-    # Known series for different indices
+    # Known series for different indices.
+    # Nasdaq-100 entries use current candidate names; stale KXNDX removed.
     series_list = [
         ("KXINX", "S&P 500 Daily Close"),
         ("KXINXY", "S&P 500 Yearly Close"),
         ("KXINXMINY", "S&P 500 Yearly Min"),
         ("KXINXMAXY", "S&P 500 Yearly Max"),
-        ("KXNDX", "NASDAQ-100 (potential)"),
+        ("KXNASDAQ100", "Nasdaq-100 (candidate)"),
+        ("KXNASDAQ100Y", "Nasdaq-100 Yearly (candidate)"),
+        ("KXNASDAQ100U", "Nasdaq-100 Unit (candidate)"),
     ]
     
     logger.info("=" * 80)

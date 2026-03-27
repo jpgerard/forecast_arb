@@ -30,8 +30,11 @@ DEFAULT_KALSHI_SERIES = ["KXINX", "KXINXY", "KXINXMINY", "KXINXMAXY"]
 INDEX_FAMILY_SERIES = {
     "SPY": ["KXINX", "KXINXY", "KXINXMINY", "KXINXMAXY"],
     "SPX": ["KXINX", "KXINXY", "KXINXMINY", "KXINXMAXY"],
-    "QQQ": ["KXNDX", "KXNDXY", "NASDAQ100", "NDX"],  # Multiple candidates to probe
-    "NDX": ["KXNDX", "KXNDXY", "NASDAQ100", "NDX"],
+    # Nasdaq-100 candidates — stale KXNDX/KXNDXY/NASDAQ100 names removed.
+    # These are primary candidate families; probe each at runtime and discard
+    # any that return no markets (Kalshi naming is not guaranteed-stable).
+    "QQQ": ["KXNASDAQ100", "KXNASDAQ100Y", "KXNASDAQ100U"],
+    "NDX": ["KXNASDAQ100", "KXNASDAQ100Y", "KXNASDAQ100U"],
 }
 
 

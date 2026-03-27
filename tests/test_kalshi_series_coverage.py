@@ -20,9 +20,9 @@ from forecast_arb.kalshi.series_coverage import (
 )
 from forecast_arb.kalshi.market_mapper import (
     map_event_to_markets,
-    _infer_series_from_ticker,
-    _run_coverage_precheck
+    _run_coverage_precheck,
 )
+from forecast_arb.kalshi.threshold_parser import infer_series_from_ticker as _infer_series_from_ticker
 
 
 # Mock market data

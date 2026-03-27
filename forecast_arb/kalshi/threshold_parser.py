@@ -146,10 +146,10 @@ def parse_threshold_from_market(
 def _infer_series_from_ticker(ticker: str) -> Optional[str]:
     """
     Infer series from ticker prefix.
-    
+
     Args:
         ticker: Market ticker
-    
+
     Returns:
         Series ticker or None
     """
@@ -163,6 +163,22 @@ def _infer_series_from_ticker(ticker: str) -> Optional[str]:
         return "KXINX"
     else:
         return None
+
+
+def infer_series_from_ticker(ticker: str) -> Optional[str]:
+    """
+    Public wrapper: infer Kalshi series from ticker prefix.
+
+    Prefer importing this over ``_infer_series_from_ticker`` in external
+    modules.  The private name is kept for internal use within this module.
+
+    Args:
+        ticker: Market ticker (e.g. "KXINXMINY-01JAN2027-6600.01")
+
+    Returns:
+        Series ticker string (e.g. "KXINXMINY") or None if not recognised.
+    """
+    return _infer_series_from_ticker(ticker)
 
 
 def _parse_range_from_title(title: str) -> Optional[Dict[str, float]]:

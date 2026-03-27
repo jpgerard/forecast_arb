@@ -115,15 +115,20 @@ class TestMarketLevelParsing:
         assert result["mid"] == 4100.0
     
     def test_parse_ticker_only(self):
-        """Test parsing level from ticker when title is unclear."""
+        """
+        B-tickers without a range title now return None.
+
+        Old behaviour: extracted level=4200 from the ticker digit sequence.
+        New behaviour (via threshold_parser shim): B-tickers are range
+        boundaries, not point levels.  Without a "between X and Y" title,
+        the result is None.  This is the correct interpretation.
+        """
         ticker = "INX-26FEB27-B4200"
         title = "Some unclear description"
-        
+
         result = parse_market_level(ticker, title)
-        
-        assert result is not None
-        assert result["market_type"] == "level"
-        assert result["level"] == 4200.0
+
+        assert result is None
     
     def test_parse_unparseable_market(self):
         """Test that unparseable market returns None."""
@@ -484,6 +489,201 @@ class TestMappedKalshiMarket:
         assert mapped.implied_level == 4250.0
         assert mapped.mapping_error == 0.0
         assert mapped.liquidity_score == 0.8
+
+
+class TestParseMarketLevelRouting:
+    """
+    Tests documenting the routing behaviour of the parse_market_level shim.
+
+    These tests cover cases that the old parser did not handle (T-ticker
+    decimals, KXINXMINY final-segment, comma-separated numbers) as well as
+    the explicit B-ticker behavioural change.
+    """
+
+    def test_kxinx_t_ticker_decimal(self):
+        """KXINX T-ticker with decimal is parsed as a point level."""
+        ticker = "KXINX-26FEB27H1600-T7199.9999"
+        title = "Will S&P 500 close below 7199.9999 on Feb 27?"
+        result = parse_market_level(ticker, title)
+        assert result is not None
+        assert result["market_type"] == "level"
+        assert result["level"] == pytest.approx(7199.9999)
+
+    def test_kxinxminy_final_segment_decimal(self):
+        """KXINXMINY ticker with decimal final segment is parsed as a point level."""
+        ticker = "KXINXMINY-01JAN2027-6600.01"
+        title = "S&P 500 yearly minimum below 6600.01"
+        result = parse_market_level(ticker, title)
+        assert result is not None
+        assert result["market_type"] == "level"
+        assert result["level"] == pytest.approx(6600.01)
+
+    def test_kxinx_b_ticker_with_range_title(self):
+        """KXINX B-ticker WITH a range title returns a range result."""
+        ticker = "KXINX-26FEB27H1600-B7187"
+        title = "Will the S&P 500 close between 7175 and 7199.9999 on Feb 27?"
+        result = parse_market_level(ticker, title)
+        assert result is not None
+        assert result["market_type"] == "range"
+        assert result["low"] == pytest.approx(7175.0)
+        assert result["high"] == pytest.approx(7199.9999)
+        assert result["mid"] == pytest.approx((7175.0 + 7199.9999) / 2)
+
+    def test_b_ticker_without_range_title_returns_none(self):
+        """B-ticker WITHOUT a range title returns None (documents the shim change)."""
+        ticker = "KXINX-26FEB27H1600-B7187"
+        title = "Some market"
+        result = parse_market_level(ticker, title)
+        assert result is None
+
+    def test_title_with_comma_separated_number(self):
+        """Comma-separated threshold in title is parsed correctly."""
+        ticker = "KXINX-26DEC27H1600-T7000"
+        title = "S&P 500 closes below 7,000 on Dec 27"
+        # threshold_parser fallback handles comma in \b(?:below|...)\s+([\d,]+...)
+        result = parse_market_level(ticker, title)
+        assert result is not None
+        assert result["market_type"] == "level"
+        # Both title fallback (7000) and T-ticker (7000) return same value
+        assert result["level"] == pytest.approx(7000.0)
+
+    def test_no_false_match_sp500_number(self):
+        """Parsing must NOT extract '500' from 'S&P 500' in titles."""
+        ticker = "KXINX-26FEB27H1600-T7200"
+        title = "Will the S&P 500 close above 7200 on Feb 27?"
+        result = parse_market_level(ticker, title)
+        # Should find 7200 from the T-ticker, not 500
+        assert result is not None
+        assert result["market_type"] == "level"
+        assert result["level"] == pytest.approx(7200.0)
+
+    def test_range_from_title_non_kxinx_series(self):
+        """Non-KXINX tickers with 'between X and Y' title still return a range."""
+        ticker = "INX-26FEB27-R40004200"
+        title = "SPX between 4,000 and 4,200 on Feb 27"
+        result = parse_market_level(ticker, title)
+        assert result is not None
+        assert result["market_type"] == "range"
+        assert result["low"] == pytest.approx(4000.0)
+        assert result["high"] == pytest.approx(4200.0)
+
+
+class TestDiagnosticSummaryBlock:
+    """
+    Tests for the structured diagnostic summary emitted by map_event_to_markets.
+
+    Each test verifies the diag_code logged, using caplog to capture INFO-level
+    entries from the market_mapper logger.
+    """
+
+    BASE_EVENT = {
+        "type": "index_drawdown",
+        "index": "SPX",
+        "threshold_pct": -0.15,
+        "expiry": date(2026, 2, 27),
+    }
+    SPOT = 5000.0
+
+    def _get_diag_code(self, caplog, candidates, markets):
+        """Helper: run mapping with disabled coverage precheck, return captured diag code."""
+        import logging
+        with caplog.at_level(logging.INFO, logger="forecast_arb.kalshi.market_mapper"):
+            map_event_to_markets(
+                self.BASE_EVENT, self.SPOT, markets, enable_coverage_precheck=False
+            )
+        for record in caplog.records:
+            if "mapping pass summary" in record.message:
+                # parse diag_code from the dict representation in the message
+                import ast
+                # The dict is embedded as repr; extract it
+                text = record.message[record.message.index("{"):]
+                d = ast.literal_eval(text)
+                return d.get("diag_code")
+        return "NOT_FOUND"
+
+    def test_diag_no_markets_returned(self, caplog):
+        """Empty input → DIAG_NO_MARKETS_RETURNED."""
+        code = self._get_diag_code(caplog, [], [])
+        assert code == "NO_MARKETS_RETURNED"
+
+    def test_diag_no_representable_markets(self, caplog):
+        """Non-SPX markets only → DIAG_NO_REPRESENTABLE_MARKETS."""
+        markets = [
+            {
+                "ticker": "NASDAQ-26FEB27-B15000",
+                "title": "NASDAQ below 15000 on 2026-02-27",
+                "close_time": "2026-02-27T23:59:59Z",
+                "market_type": "binary",
+            }
+        ]
+        code = self._get_diag_code(caplog, [], markets)
+        assert code == "NO_REPRESENTABLE_MARKETS"
+
+    def test_diag_date_mismatch(self, caplog):
+        """SPX market with wrong expiry → DIAG_DATE_MISMATCH."""
+        markets = [
+            {
+                "ticker": "INX-26MAR27-B4250",
+                "title": "S&P 500 closes below 4250 on 2026-03-27",
+                "close_time": "2026-03-27T23:59:59Z",
+                "market_type": "binary",
+            }
+        ]
+        code = self._get_diag_code(caplog, [], markets)
+        assert code == "DATE_MISMATCH"
+
+    def test_diag_parse_failure(self, caplog):
+        """SPX market on correct date but unparseable title → DIAG_PARSE_FAILURE."""
+        markets = [
+            {
+                "ticker": "INX-26FEB27-XYZ",
+                "title": "S&P 500 something unknown on 2026-02-27",
+                "close_time": "2026-02-27T23:59:59Z",
+                "market_type": "binary",
+            }
+        ]
+        code = self._get_diag_code(caplog, [], markets)
+        assert code == "PARSE_FAILURE"
+
+    def test_diag_threshold_mismatch(self, caplog):
+        """Level parsed but too far from target → DIAG_THRESHOLD_MISMATCH."""
+        markets = [
+            {
+                "ticker": "INX-26FEB27-B3000",
+                "title": "S&P 500 closes below 3000 on 2026-02-27",
+                "close_time": "2026-02-27T23:59:59Z",
+                "market_type": "binary",
+            }
+        ]
+        code = self._get_diag_code(caplog, [], markets)
+        assert code == "THRESHOLD_MISMATCH"
+
+    def test_diag_exact_match_found(self, caplog):
+        """Exact level match → diag_code is None."""
+        target_level = 5000.0 * 0.85  # 4250
+        markets = [
+            {
+                "ticker": "INX-26FEB27-B4250",
+                "title": "S&P 500 closes below 4250 on 2026-02-27",
+                "close_time": "2026-02-27T23:59:59Z",
+                "market_type": "binary",
+                "volume_24h": 500,
+            }
+        ]
+        import logging
+        with caplog.at_level(logging.INFO, logger="forecast_arb.kalshi.market_mapper"):
+            map_event_to_markets(
+                self.BASE_EVENT, self.SPOT, markets, enable_coverage_precheck=False
+            )
+        for record in caplog.records:
+            if "mapping pass summary" in record.message:
+                import ast
+                text = record.message[record.message.index("{"):]
+                d = ast.literal_eval(text)
+                assert d.get("diag_code") is None
+                assert d.get("n_candidates") == 1
+                return
+        pytest.fail("No mapping pass summary found in logs")
 
 
 if __name__ == "__main__":
